@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import sys
+from time import monotonic
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QGuiApplication, QIcon
@@ -16,7 +18,9 @@ from .hotkey import GlobalCopyTrigger
 from .popup import TranslationPopup
 from .settings import AppSettings
 from .settings_dialog import SettingsDialog
-from .translator import TranslationError, request_translation
+from .translator import TranslationError, load_cached_translation, request_translation
+
+DUPLICATE_TRANSLATION_WINDOW_SECONDS = 0.8
 
 
 class TranslationSignals(QObject):
@@ -57,7 +61,16 @@ class QuickTranslateApp(QObject):
         )
         self.thread_pool = QThreadPool.globalInstance()
         self.is_translating = False
-        self.last_clipboard_text = ""
+        self.pending_clipboard_capture = False
+        self._clipboard_baseline_text = ""
+        self._clipboard_capture_started_at = 0.0
+        self._pending_signature = ""
+        self._last_success_signature = ""
+        self._last_success_at = 0.0
+
+        self.clipboard_poll_timer = QTimer(self)
+        self.clipboard_poll_timer.setSingleShot(True)
+        self.clipboard_poll_timer.timeout.connect(self._poll_clipboard_capture)
 
         self.tray_icon = QSystemTrayIcon(self._resolve_icon(), self.application)
         self.tray_icon.setToolTip("QuickTranslate")
@@ -66,7 +79,7 @@ class QuickTranslateApp(QObject):
         self.tray_icon.show()
 
         self.copy_trigger = GlobalCopyTrigger(self.settings.trigger_interval_ms)
-        self.copy_trigger.triggered.connect(self._queue_clipboard_translation)
+        self.copy_trigger.triggered.connect(self._begin_clipboard_capture)
         self.copy_trigger.error.connect(self._show_error)
         self.copy_trigger.start()
 
@@ -93,7 +106,7 @@ class QuickTranslateApp(QObject):
         settings_action = QAction("설정", menu)
         quit_action = QAction("종료", menu)
 
-        translate_action.triggered.connect(self._translate_clipboard_now)
+        translate_action.triggered.connect(self._begin_clipboard_capture)
         settings_action.triggered.connect(self.open_settings)
         quit_action.triggered.connect(self.quit)
 
@@ -119,6 +132,7 @@ class QuickTranslateApp(QObject):
             self.settings.popup_auto_max_width,
             self.settings.popup_auto_max_height,
         )
+        self.clipboard_poll_timer.setInterval(self.settings.clipboard_settle_poll_ms)
         self.copy_trigger.update_interval(self.settings.trigger_interval_ms)
         self.tray_icon.showMessage(
             "QuickTranslate",
@@ -127,40 +141,89 @@ class QuickTranslateApp(QObject):
             2000,
         )
 
-    def _translate_clipboard_now(self) -> None:
-        self._queue_clipboard_translation()
+    def _begin_clipboard_capture(self) -> None:
+        if self.is_translating or self.pending_clipboard_capture:
+            return
 
-    def _queue_clipboard_translation(self) -> None:
-        QTimer.singleShot(55, self._translate_from_clipboard)
+        self.pending_clipboard_capture = True
+        self._clipboard_baseline_text = QGuiApplication.clipboard().text().strip()
+        self._clipboard_capture_started_at = monotonic()
+        self.clipboard_poll_timer.start(self.settings.clipboard_settle_poll_ms)
 
-    def _translate_from_clipboard(self) -> None:
-        if self.is_translating:
+    def _poll_clipboard_capture(self) -> None:
+        if not self.pending_clipboard_capture:
             return
 
         clipboard_text = QGuiApplication.clipboard().text().strip()
+        clipboard_changed = bool(clipboard_text) and clipboard_text != self._clipboard_baseline_text
+        elapsed_ms = (monotonic() - self._clipboard_capture_started_at) * 1000
+        timed_out = elapsed_ms >= self.settings.clipboard_settle_timeout_ms
+
+        if not clipboard_changed and not timed_out:
+            self.clipboard_poll_timer.start(self.settings.clipboard_settle_poll_ms)
+            return
+
+        self.pending_clipboard_capture = False
         if not clipboard_text:
             return
 
-        self.last_clipboard_text = clipboard_text
-        self.is_translating = True
+        self._start_translation_for_text(clipboard_text)
 
-        task = TranslationTask(clipboard_text, self.settings)
+    def _start_translation_for_text(self, source_text: str) -> None:
+        signature = self._signature_for_text(source_text)
+        now = monotonic()
+        if (
+            signature == self._last_success_signature
+            and now - self._last_success_at <= DUPLICATE_TRANSLATION_WINDOW_SECONDS
+        ):
+            return
+
+        cached = load_cached_translation(source_text, self.settings)
+        if cached is not None:
+            self._record_success(signature)
+            self.popup.show_translation(cached.text, cached.model)
+            return
+
+        self.is_translating = True
+        self._pending_signature = signature
+        self.popup.show_loading()
+
+        task = TranslationTask(source_text, self.settings)
         task.signals.success.connect(self._handle_translation_success)
         task.signals.failure.connect(self._handle_translation_failure)
         self.thread_pool.start(task)
 
     def _handle_translation_success(self, translated_text: str, model_name: str) -> None:
         self.is_translating = False
+        self._record_success(self._pending_signature)
+        self._pending_signature = ""
         self.popup.show_translation(translated_text, model_name)
 
     def _handle_translation_failure(self, message: str) -> None:
         self.is_translating = False
+        self._pending_signature = ""
         self._show_error(message)
 
     def _show_error(self, message: str) -> None:
         self.popup.show_status("오류", message)
 
+    def _record_success(self, signature: str) -> None:
+        self._last_success_signature = signature
+        self._last_success_at = monotonic()
+
+    def _signature_for_text(self, text: str) -> str:
+        payload = "|".join(
+            [
+                text,
+                self.settings.target_language_code,
+                self.settings.primary_model,
+            ]
+        )
+        return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
     def quit(self) -> None:
+        self.pending_clipboard_capture = False
+        self.clipboard_poll_timer.stop()
         self.copy_trigger.stop()
         self.tray_icon.hide()
         self.application.quit()

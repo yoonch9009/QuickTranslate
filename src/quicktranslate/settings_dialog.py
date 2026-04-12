@@ -93,6 +93,10 @@ class SettingsDialog(QDialog):
             fallback_model=self.fallback_model_combo.currentData(),
             trigger_interval_ms=self.trigger_interval_input.value(),
             request_timeout_seconds=self.timeout_input.value(),
+            fallback_on_provider_error_only=current.fallback_on_provider_error_only,
+            cache_ttl_seconds=current.cache_ttl_seconds,
+            clipboard_settle_poll_ms=current.clipboard_settle_poll_ms,
+            clipboard_settle_timeout_ms=current.clipboard_settle_timeout_ms,
             popup_auto_max_width=self.popup_width_input.value(),
             popup_auto_max_height=self.popup_height_input.value(),
         )
