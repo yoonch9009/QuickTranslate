@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+
 from PySide6.QtCore import QEvent, QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QCursor, QFontMetrics, QGuiApplication, QKeySequence, QTextDocument, QShortcut
 from PySide6.QtWidgets import (
@@ -20,6 +22,10 @@ class TranslationPopup(QWidget):
     _TEXT_CHROME_HEIGHT = 78
     _LOADING_WIDTH = 220
     _LOADING_HEIGHT = 92
+    _GLOBAL_INPUT_POLL_MS = 25
+    _VK_ESCAPE = 0x1B
+    _VK_LBUTTON = 0x01
+    _VK_RBUTTON = 0x02
 
     def __init__(self, auto_max_width: int, auto_max_height: int) -> None:
         super().__init__(
@@ -38,6 +44,9 @@ class TranslationPopup(QWidget):
         self._resize_geometry = QRect()
         self._moving = False
         self._move_offset = QPoint()
+        self._global_esc_down = False
+        self._global_left_down = False
+        self._global_right_down = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -82,6 +91,10 @@ class TranslationPopup(QWidget):
         self.installEventFilter(self)
         self.text_edit.viewport().installEventFilter(self)
         self.action_bar.installEventFilter(self)
+
+        self.global_input_timer = QTimer(self)
+        self.global_input_timer.setInterval(self._GLOBAL_INPUT_POLL_MS)
+        self.global_input_timer.timeout.connect(self._poll_global_input)
 
         self.resize(
             min(self._auto_max_width, 520),
@@ -130,6 +143,15 @@ class TranslationPopup(QWidget):
         if event.type() == QEvent.Type.WindowDeactivate and self.isVisible():
             QTimer.singleShot(0, self.hide)
         return super().event(event)
+
+    def showEvent(self, event) -> None:
+        self._reset_global_input_state()
+        self.global_input_timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:
+        self.global_input_timer.stop()
+        super().hideEvent(event)
 
     def set_auto_size_limits(self, auto_max_width: int, auto_max_height: int) -> None:
         self._auto_max_width = max(auto_max_width, self._MIN_WIDTH)
@@ -312,3 +334,48 @@ class TranslationPopup(QWidget):
             }
             """
         )
+
+    def _poll_global_input(self) -> None:
+        if not self.isVisible():
+            return
+
+        esc_down = self._is_virtual_key_down(self._VK_ESCAPE)
+        if esc_down and not self._global_esc_down:
+            self.hide()
+            self._global_esc_down = True
+            return
+        self._global_esc_down = esc_down
+
+        left_down = self._is_virtual_key_down(self._VK_LBUTTON)
+        right_down = self._is_virtual_key_down(self._VK_RBUTTON)
+
+        if self._should_hide_for_global_click(left_down, self._global_left_down):
+            self.hide()
+            self._global_left_down = left_down
+            self._global_right_down = right_down
+            return
+
+        if self._should_hide_for_global_click(right_down, self._global_right_down):
+            self.hide()
+            self._global_left_down = left_down
+            self._global_right_down = right_down
+            return
+
+        self._global_left_down = left_down
+        self._global_right_down = right_down
+
+    def _should_hide_for_global_click(self, current_down: bool, previous_down: bool) -> bool:
+        if not current_down or previous_down:
+            return False
+        if self._moving or self._resize_edges:
+            return False
+        return not self.frameGeometry().contains(QCursor.pos())
+
+    def _reset_global_input_state(self) -> None:
+        self._global_esc_down = self._is_virtual_key_down(self._VK_ESCAPE)
+        self._global_left_down = self._is_virtual_key_down(self._VK_LBUTTON)
+        self._global_right_down = self._is_virtual_key_down(self._VK_RBUTTON)
+
+    @staticmethod
+    def _is_virtual_key_down(virtual_key: int) -> bool:
+        return bool(ctypes.windll.user32.GetAsyncKeyState(virtual_key) & 0x8000)
