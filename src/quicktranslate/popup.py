@@ -18,6 +18,8 @@ class TranslationPopup(QWidget):
     _EDGE_MARGIN = 6
     _TEXT_CHROME_WIDTH = 72
     _TEXT_CHROME_HEIGHT = 78
+    _LOADING_WIDTH = 220
+    _LOADING_HEIGHT = 92
 
     def __init__(self, auto_max_width: int, auto_max_height: int) -> None:
         super().__init__(
@@ -135,14 +137,22 @@ class TranslationPopup(QWidget):
 
     def show_translation(self, text: str, model_name: str) -> None:
         del model_name
+        self.copy_button.setEnabled(True)
         self.text_edit.setPlainText(text)
         self._auto_resize_to_content(text)
-        self._show_near_cursor()
+        self._show_popup(reposition=not self.isVisible())
+
+    def show_loading(self, message: str = "번역 중...") -> None:
+        self.copy_button.setEnabled(False)
+        self.text_edit.setPlainText(message)
+        self.resize(self._LOADING_WIDTH, self._LOADING_HEIGHT)
+        self._show_popup(reposition=not self.isVisible())
 
     def show_status(self, title: str, message: str) -> None:
+        self.copy_button.setEnabled(False)
         self.text_edit.setPlainText(f"{title}\n\n{message}" if title else message)
         self._auto_resize_to_content(self.text_edit.toPlainText())
-        self._show_near_cursor()
+        self._show_popup(reposition=not self.isVisible())
 
     def copy_text(self) -> None:
         QGuiApplication.clipboard().setText(self.text_edit.toPlainText())
@@ -169,7 +179,15 @@ class TranslationPopup(QWidget):
 
         self.resize(target_width, target_height)
 
-    def _show_near_cursor(self) -> None:
+    def _show_popup(self, *, reposition: bool) -> None:
+        if reposition:
+            self._move_near_cursor()
+
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _move_near_cursor(self) -> None:
         cursor_pos = QCursor.pos()
         screen = QGuiApplication.screenAt(cursor_pos)
         fallback_screen = self.screen() or QGuiApplication.primaryScreen()
@@ -182,9 +200,6 @@ class TranslationPopup(QWidget):
             pos.setY(max(geometry.top(), geometry.bottom() - self.height()))
 
         self.move(pos)
-        self.show()
-        self.raise_()
-        self.activateWindow()
 
     def _resize_edges_for_pos(self, pos: QPoint) -> Qt.Edges:
         rect = self.rect()

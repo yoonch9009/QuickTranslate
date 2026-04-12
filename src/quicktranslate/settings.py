@@ -16,6 +16,10 @@ class AppSettings:
     fallback_model: str = "google/gemma-4-26b-a4b-it"
     trigger_interval_ms: int = 800
     request_timeout_seconds: int = 20
+    fallback_on_provider_error_only: bool = True
+    cache_ttl_seconds: int = 300
+    clipboard_settle_poll_ms: int = 10
+    clipboard_settle_timeout_ms: int = 80
     popup_auto_max_width: int = 620
     popup_auto_max_height: int = 520
 
