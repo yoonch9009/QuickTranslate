@@ -52,13 +52,12 @@ def build_instructions(target_language_code: str) -> str:
     )
 
 
-def reasoning_effort_for_model(model: str) -> str:
-    normalized = model.strip().lower()
-    if normalized.startswith("qwen/"):
-        return "none"
-    if normalized.startswith("google/gemma"):
-        return "minimal"
-    return "none"
+def reasoning_config_for_request(model: str, settings: AppSettings) -> dict | None:
+    if model.strip() == settings.primary_model.strip():
+        return settings.primary_reasoning_config
+    if model.strip() == settings.fallback_model.strip():
+        return settings.fallback_reasoning_config
+    return None
 
 
 def estimate_max_output_tokens(source_text: str) -> int:
@@ -151,11 +150,10 @@ def prepare_request(
     settings: AppSettings,
     model: str,
 ) -> dict:
-    return {
+    payload = {
         "model": model,
         "input": source_text,
         "instructions": build_instructions(settings.target_language_code),
-        "reasoning": {"effort": reasoning_effort_for_model(model)},
         "text": {"format": {"type": "text"}},
         "max_output_tokens": estimate_max_output_tokens(source_text),
         "provider": {
@@ -165,6 +163,10 @@ def prepare_request(
         "store": False,
         "temperature": 0.0,
     }
+    reasoning = reasoning_config_for_request(model, settings)
+    if reasoning:
+        payload["reasoning"] = reasoning
+    return payload
 
 
 def failure_from_status(status_code: int, detail: str, model: str) -> RequestFailure:

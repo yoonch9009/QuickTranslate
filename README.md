@@ -17,8 +17,9 @@
 - 글로벌 `Ctrl+C+C` 트리거
 - 클립보드 텍스트 자동 번역
 - OpenRouter `responses` API 사용
-- 모델별 reasoning 설정 적용
+- 모델별 effort 빠른 선택 + reasoning JSON 수동 설정 지원
 - OpenRouter 기본 모델 + 폴백 모델 지원
+- 기본/폴백 모델 직접 입력 지원
 - 텍스트 중심 미니멀 팝업 표시
 - 짧은 클립보드 polling 기반 빠른 캡처
 - 요청 시작 즉시 로딩 팝업 표시
@@ -53,6 +54,8 @@ pythonw .\run_quicktranslate.pyw
 ```
 
 처음 실행하면 설정 창이 열리며 OpenRouter API Key를 입력해야 합니다.
+모델 입력칸은 직접 수정할 수 있고, 기본 목록도 실제 모델 ID 그대로 표시됩니다.
+각 모델별로 `effort`를 콤보로 빠르게 고를 수 있고, 필요하면 reasoning JSON으로 세부 설정을 덮어쓸 수 있습니다.
 
 ## 사용 방법
 
