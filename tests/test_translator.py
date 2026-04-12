@@ -16,15 +16,30 @@ from quicktranslate.translator import (
 
 
 class TranslatorTests(unittest.TestCase):
-    def test_prepare_request_sets_reasoning_by_model(self) -> None:
-        settings = AppSettings()
+    def test_prepare_request_passes_reasoning_config_by_model(self) -> None:
+        settings = AppSettings(
+            primary_reasoning_config={"effort": "high", "exclude": True},
+            fallback_reasoning_config={"max_tokens": 2048, "enabled": True},
+        )
 
         qwen_payload = prepare_request("hello", settings, settings.primary_model)
         gemma_payload = prepare_request("hello", settings, settings.fallback_model)
 
-        self.assertEqual(qwen_payload["reasoning"]["effort"], "none")
-        self.assertEqual(gemma_payload["reasoning"]["effort"], "minimal")
+        self.assertEqual(qwen_payload["reasoning"]["effort"], "high")
+        self.assertTrue(qwen_payload["reasoning"]["exclude"])
+        self.assertEqual(gemma_payload["reasoning"]["max_tokens"], 2048)
+        self.assertTrue(gemma_payload["reasoning"]["enabled"])
         self.assertEqual(qwen_payload["text"]["format"]["type"], "text")
+
+    def test_prepare_request_omits_reasoning_when_not_configured(self) -> None:
+        settings = AppSettings(
+            primary_reasoning_config=None,
+            fallback_reasoning_config=None,
+        )
+
+        payload = prepare_request("hello", settings, settings.primary_model)
+
+        self.assertNotIn("reasoning", payload)
 
     def test_estimate_max_output_tokens_prefers_lower_limits_for_short_text(self) -> None:
         self.assertEqual(estimate_max_output_tokens("hello"), 120)

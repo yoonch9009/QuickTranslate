@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 APP_DIR = Path.home() / "AppData" / "Roaming" / "QuickTranslate"
 SETTINGS_PATH = APP_DIR / "settings.json"
@@ -13,7 +14,9 @@ class AppSettings:
     api_key: str = ""
     target_language_code: str = "ko"
     primary_model: str = "qwen/qwen3.5-flash-02-23"
+    primary_reasoning_config: dict[str, Any] | None = field(default_factory=lambda: {"effort": "none"})
     fallback_model: str = "google/gemma-4-26b-a4b-it"
+    fallback_reasoning_config: dict[str, Any] | None = field(default_factory=lambda: {"effort": "none"})
     trigger_interval_ms: int = 800
     request_timeout_seconds: int = 20
     fallback_on_provider_error_only: bool = True
@@ -40,6 +43,12 @@ class AppSettings:
             data["popup_auto_max_width"] = data.pop("popup_width")
         if "popup_height" in data and "popup_auto_max_height" not in data:
             data["popup_auto_max_height"] = data.pop("popup_height")
+        if "primary_reasoning_effort" in data and "primary_reasoning_config" not in data:
+            effort = str(data.pop("primary_reasoning_effort") or "").strip()
+            data["primary_reasoning_config"] = {"effort": effort} if effort else None
+        if "fallback_reasoning_effort" in data and "fallback_reasoning_config" not in data:
+            effort = str(data.pop("fallback_reasoning_effort") or "").strip()
+            data["fallback_reasoning_config"] = {"effort": effort} if effort else None
 
         defaults = asdict(cls())
         defaults.update(data)
@@ -68,6 +77,6 @@ LANGUAGE_OPTIONS: list[tuple[str, str]] = [
 
 
 MODEL_OPTIONS: list[tuple[str, str]] = [
-    ("Qwen 3.5 Flash (non-reasoning)", "qwen/qwen3.5-flash-02-23"),
-    ("Gemma 4 26B A4B IT (minimal reasoning)", "google/gemma-4-26b-a4b-it"),
+    ("qwen/qwen3.5-flash-02-23", "qwen/qwen3.5-flash-02-23"),
+    ("google/gemma-4-26b-a4b-it", "google/gemma-4-26b-a4b-it"),
 ]
