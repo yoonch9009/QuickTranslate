@@ -91,6 +91,7 @@ class TranslatorTests(unittest.TestCase):
         self.assertEqual(payload["messages"][1]["role"], "user")
         self.assertEqual(payload["messages"][1]["content"], "hello")
         self.assertIn("max_tokens", payload)
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
         self.assertNotIn("reasoning", payload)
         self.assertNotIn("provider", payload)
 

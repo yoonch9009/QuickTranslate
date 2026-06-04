@@ -223,6 +223,11 @@ def prepare_deepseek_request(
             },
             {"role": "user", "content": source_text},
         ],
+        # DeepSeek V4 enables thinking mode by default. Translation does not need
+        # chain-of-thought, and leaving it on slows responses, raises cost, and
+        # lets the CoT consume the tight max_tokens budget (risking empty/cut-off
+        # translations). Disable it so temperature=0 also takes effect.
+        "thinking": {"type": "disabled"},
         "max_tokens": estimate_max_output_tokens(source_text),
         "temperature": 0.0,
         "stream": False,
