@@ -90,7 +90,7 @@ class QuickTranslateApp(QObject):
             3000,
         )
 
-        if not self.settings.api_key:
+        if not self.settings.api_key and not self.settings.deepseek_api_key:
             QTimer.singleShot(300, self.open_settings)
 
     def _resolve_icon(self) -> QIcon:

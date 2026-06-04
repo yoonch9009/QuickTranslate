@@ -44,6 +44,10 @@ class SettingsDialog(QDialog):
         self.api_key_input.setEchoMode(QLineEdit.PasswordEchoOnEdit)
         self.api_key_input.setPlaceholderText("OpenRouter API Key")
 
+        self.deepseek_api_key_input = QLineEdit(settings.deepseek_api_key)
+        self.deepseek_api_key_input.setEchoMode(QLineEdit.PasswordEchoOnEdit)
+        self.deepseek_api_key_input.setPlaceholderText("DeepSeek API Key")
+
         self.target_language_combo = QComboBox()
         self.primary_model_combo = QComboBox()
         self.fallback_model_combo = QComboBox()
@@ -136,7 +140,8 @@ class SettingsDialog(QDialog):
             )
         )
 
-        form.addRow("API Key", self.api_key_input)
+        form.addRow("OpenRouter API Key", self.api_key_input)
+        form.addRow("DeepSeek API Key", self.deepseek_api_key_input)
         form.addRow("대상 언어", self.target_language_combo)
         form.addRow("기본 모델", self.primary_model_combo)
         form.addRow("기본 effort", self.primary_effort_combo)
@@ -175,10 +180,11 @@ class SettingsDialog(QDialog):
     def build_settings(self, current: AppSettings) -> AppSettings:
         return AppSettings(
             api_key=self.api_key_input.text().strip(),
+            deepseek_api_key=self.deepseek_api_key_input.text().strip(),
             target_language_code=self.target_language_combo.currentData(),
-            primary_model=self.primary_model_combo.currentText().strip(),
+            primary_model=(self.primary_model_combo.currentData() or self.primary_model_combo.currentText()).strip(),
             primary_reasoning_config=self._parse_reasoning_input(self.primary_reasoning_input),
-            fallback_model=self.fallback_model_combo.currentText().strip(),
+            fallback_model=(self.fallback_model_combo.currentData() or self.fallback_model_combo.currentText()).strip(),
             fallback_reasoning_config=self._parse_reasoning_input(self.fallback_reasoning_input),
             trigger_interval_ms=self.trigger_interval_input.value(),
             request_timeout_seconds=self.timeout_input.value(),
