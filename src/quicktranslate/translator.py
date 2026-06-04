@@ -107,15 +107,29 @@ def reasoning_config_for_request(model: str, settings: AppSettings) -> dict | No
     return None
 
 
-def estimate_max_output_tokens(source_text: str) -> int:
+# Generous output-token ceilings per backend. Billing is by actual tokens used,
+# so a high cap only prevents truncation; it does not raise cost. OpenRouter is
+# kept lower because individual models there have much smaller output limits and
+# would reject an oversized request.
+_OUTPUT_TOKEN_CEILING = {
+    PROVIDER_DEEPSEEK: 65536,
+    PROVIDER_OPENROUTER: 16384,
+}
+_OUTPUT_TOKEN_FLOOR = 2048
+
+
+def estimate_max_output_tokens(
+    source_text: str,
+    provider: str = PROVIDER_OPENROUTER,
+) -> int:
     text_length = len(source_text.strip())
-    if text_length <= 80:
-        return 120
-    if text_length <= 240:
-        return 220
-    if text_length <= 800:
-        return min(700, max(260, int(text_length * 0.9)))
-    return min(1800, max(700, int(text_length * 0.75)))
+    # ~2 chars/token is a conservative (over-)estimate of the input size; allow
+    # several times that for translation expansion plus a comfortable floor, then
+    # cap at the provider's safe maximum.
+    approx_input_tokens = text_length // 2 + 1
+    generous = approx_input_tokens * 4 + _OUTPUT_TOKEN_FLOOR
+    ceiling = _OUTPUT_TOKEN_CEILING.get(provider, _OUTPUT_TOKEN_CEILING[PROVIDER_OPENROUTER])
+    return min(generous, ceiling)
 
 
 def extract_output_text(data: dict) -> str:
@@ -228,7 +242,7 @@ def prepare_deepseek_request(
         # lets the CoT consume the tight max_tokens budget (risking empty/cut-off
         # translations). Disable it so temperature=0 also takes effect.
         "thinking": {"type": "disabled"},
-        "max_tokens": estimate_max_output_tokens(source_text),
+        "max_tokens": estimate_max_output_tokens(source_text, PROVIDER_DEEPSEEK),
         "temperature": 0.0,
         "stream": False,
     }
@@ -248,7 +262,7 @@ def prepare_request(
         "input": source_text,
         "instructions": build_instructions(settings.target_language_code),
         "text": {"format": {"type": "text"}},
-        "max_output_tokens": estimate_max_output_tokens(source_text),
+        "max_output_tokens": estimate_max_output_tokens(source_text, PROVIDER_OPENROUTER),
         "provider": {
             "allow_fallbacks": True,
             "sort": "latency",
