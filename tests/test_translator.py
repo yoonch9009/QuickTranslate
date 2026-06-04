@@ -123,10 +123,17 @@ class TranslatorTests(unittest.TestCase):
             "hi",
         )
 
-    def test_estimate_max_output_tokens_prefers_lower_limits_for_short_text(self) -> None:
-        self.assertEqual(estimate_max_output_tokens("hello"), 120)
-        self.assertEqual(estimate_max_output_tokens("a" * 120), 220)
-        self.assertLessEqual(estimate_max_output_tokens("a" * 2000), 1800)
+    def test_estimate_max_output_tokens_is_generous_and_provider_capped(self) -> None:
+        # Even short text gets a comfortable budget (no tiny caps that truncate).
+        self.assertGreaterEqual(estimate_max_output_tokens("hello"), 2048)
+        # Budget grows with input length.
+        self.assertGreater(
+            estimate_max_output_tokens("a" * 4000),
+            estimate_max_output_tokens("a" * 100),
+        )
+        # Large input is capped at the provider ceiling (DeepSeek higher than OpenRouter).
+        self.assertEqual(estimate_max_output_tokens("a" * 1_000_000, PROVIDER_DEEPSEEK), 65536)
+        self.assertEqual(estimate_max_output_tokens("a" * 1_000_000, PROVIDER_OPENROUTER), 16384)
 
     def test_extract_output_text_uses_output_text_then_message_content(self) -> None:
         direct = extract_output_text({"output_text": "translated"})
