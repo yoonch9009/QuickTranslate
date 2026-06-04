@@ -59,12 +59,15 @@ class QuickTranslateApp(QObject):
             self.settings.popup_auto_max_width,
             self.settings.popup_auto_max_height,
         )
+        self.popup.closed.connect(self._cancel_active_translation)
         self.thread_pool = QThreadPool.globalInstance()
         self.is_translating = False
         self.pending_clipboard_capture = False
         self._clipboard_baseline_text = ""
         self._clipboard_capture_started_at = 0.0
         self._pending_signature = ""
+        self._pending_task_id = 0
+        self._task_counter = 0
         self._last_success_signature = ""
         self._last_success_at = 0.0
 
@@ -186,20 +189,42 @@ class QuickTranslateApp(QObject):
 
         self.is_translating = True
         self._pending_signature = signature
+        self._task_counter += 1
+        self._pending_task_id = self._task_counter
+        task_id = self._pending_task_id
         self.popup.show_loading()
 
         task = TranslationTask(source_text, self.settings)
-        task.signals.success.connect(self._handle_translation_success)
-        task.signals.failure.connect(self._handle_translation_failure)
+        task.signals.success.connect(
+            lambda text, model, tid=task_id: self._handle_translation_success(tid, text, model)
+        )
+        task.signals.failure.connect(
+            lambda message, tid=task_id: self._handle_translation_failure(tid, message)
+        )
         self.thread_pool.start(task)
 
-    def _handle_translation_success(self, translated_text: str, model_name: str) -> None:
+    def _cancel_active_translation(self) -> None:
+        # The popup was closed (close button, Esc, click outside, or focus loss).
+        # Abandon any in-flight translation so its result no longer reopens the
+        # popup. The background request itself cannot be force-killed, but its
+        # result is discarded by the task-id guard in the handlers.
+        if not self.is_translating:
+            return
+        self.is_translating = False
+        self._pending_signature = ""
+        self._pending_task_id = 0
+
+    def _handle_translation_success(self, task_id: int, translated_text: str, model_name: str) -> None:
+        if task_id != self._pending_task_id:
+            return
         self.is_translating = False
         self._record_success(self._pending_signature)
         self._pending_signature = ""
         self.popup.show_translation(translated_text, model_name)
 
-    def _handle_translation_failure(self, message: str) -> None:
+    def _handle_translation_failure(self, task_id: int, message: str) -> None:
+        if task_id != self._pending_task_id:
+            return
         self.is_translating = False
         self._pending_signature = ""
         self._show_error(message)

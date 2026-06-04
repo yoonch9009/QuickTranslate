@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ctypes
 
-from PySide6.QtCore import QEvent, QPoint, QRect, Qt, QTimer
+from PySide6.QtCore import QEvent, QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor, QFontMetrics, QGuiApplication, QKeySequence, QTextDocument, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
 
 
 class TranslationPopup(QWidget):
+    closed = Signal()
+
     _MIN_WIDTH = 320
     _MIN_HEIGHT = 180
     _EDGE_MARGIN = 6
@@ -161,6 +163,7 @@ class TranslationPopup(QWidget):
 
     def hideEvent(self, event) -> None:
         self.global_input_timer.stop()
+        self.closed.emit()
         super().hideEvent(event)
 
     def set_auto_size_limits(self, auto_max_width: int, auto_max_height: int) -> None:

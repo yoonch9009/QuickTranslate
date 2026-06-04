@@ -17,6 +17,7 @@ from quicktranslate.translator import (
     load_cached_translation,
     prepare_request,
     provider_for_model,
+    read_timeout_for,
     should_retry_with_fallback,
     split_model,
     store_cached_translation,
@@ -173,6 +174,15 @@ class TranslatorTests(unittest.TestCase):
             migrate_model_name("deepseek/deepseek-v4-pro"),
             "deepseek/deepseek-v4-pro",
         )
+
+    def test_read_timeout_scales_with_text_length(self) -> None:
+        settings = AppSettings(request_timeout_seconds=20)
+        short = read_timeout_for("hello", settings)
+        long = read_timeout_for("a" * 5000, settings)
+
+        self.assertGreaterEqual(short, 20)  # never below the configured floor
+        self.assertGreater(long, short)  # longer input waits longer
+        self.assertLessEqual(read_timeout_for("a" * 10_000_000, settings), 600)  # capped
 
     def test_retry_policy_only_retries_retryable_failures(self) -> None:
         settings = AppSettings(fallback_on_provider_error_only=True)
