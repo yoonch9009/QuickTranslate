@@ -306,21 +306,37 @@ def failure_from_status(
     )
 
 
+def read_timeout_for(source_text: str, settings: AppSettings) -> float:
+    """Scale the read timeout with input length.
+
+    Generation time grows with the amount of text, so a fixed short timeout
+    truncates long translations. Use the configured timeout as a floor and add
+    more time proportional to the input, capped at a generous ceiling.
+    """
+
+    base = max(5, int(settings.request_timeout_seconds))
+    text_length = len(source_text.strip())
+    dynamic = base + text_length // 10  # +1s per ~10 characters
+    return float(min(max(base, dynamic), 600))
+
+
 def send_request(
     payload: dict,
     headers: dict[str, str],
     settings: AppSettings,
     url: str = OPENROUTER_URL,
     label: str = "OpenRouter",
+    read_timeout: float | None = None,
 ) -> dict:
     model = payload["model"]
+    effective_read_timeout = read_timeout or settings.request_timeout_seconds
 
     try:
         response = SESSION.post(
             url,
             headers=headers,
             json=payload,
-            timeout=(CONNECT_TIMEOUT_SECONDS, settings.request_timeout_seconds),
+            timeout=(CONNECT_TIMEOUT_SECONDS, effective_read_timeout),
         )
     except requests.Timeout as exc:
         raise RuntimeError(
@@ -399,6 +415,7 @@ def request_translation(
         models.append(fallback_model)
 
     last_failure: RequestFailure | None = None
+    read_timeout = read_timeout_for(source_text, settings)
     for index, model in enumerate(models):
         provider = provider_for_model(model)
         label = provider_label(provider)
@@ -425,6 +442,7 @@ def request_translation(
                 settings,
                 url=endpoint_for_provider(provider),
                 label=label,
+                read_timeout=read_timeout,
             )
             translated_text = extract_output_text_for(provider, response_data)
             if not translated_text:
