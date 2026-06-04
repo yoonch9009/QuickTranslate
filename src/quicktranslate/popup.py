@@ -79,8 +79,8 @@ class TranslationPopup(QWidget):
         action_layout.addWidget(self.copy_button)
         action_layout.addWidget(self.close_button)
 
-        panel_layout.addWidget(self.text_edit)
         panel_layout.addWidget(self.action_bar)
+        panel_layout.addWidget(self.text_edit)
         outer.addLayout(panel_layout)
 
         self.copy_button.clicked.connect(self.copy_text)
