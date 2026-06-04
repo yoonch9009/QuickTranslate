@@ -36,6 +36,7 @@ class TranslationPopup(QWidget):
         self.setMinimumSize(self._MIN_WIDTH, self._MIN_HEIGHT)
         self.setMouseTracking(True)
         self.setObjectName("popup")
+        self.setAttribute(Qt.WA_TranslucentBackground)
 
         self._auto_max_width = max(auto_max_width, self._MIN_WIDTH)
         self._auto_max_height = max(auto_max_height, self._MIN_HEIGHT)
@@ -307,9 +308,10 @@ class TranslationPopup(QWidget):
             #popup {
                 background: #292929;
                 border: none;
+                border-radius: 12px;
             }
             #resultEdit {
-                background: #292929;
+                background: transparent;
                 border: none;
                 padding: 0;
                 font-size: 17px;
