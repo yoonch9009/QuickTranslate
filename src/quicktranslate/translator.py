@@ -11,6 +11,9 @@ import requests
 from .settings import AppSettings
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/responses"
+DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
+PROVIDER_OPENROUTER = "openrouter"
+PROVIDER_DEEPSEEK = "deepseek"
 CONNECT_TIMEOUT_SECONDS = 3.0
 SESSION = requests.Session()
 LOGGER = logging.getLogger(__name__)
@@ -52,6 +55,36 @@ def build_instructions(target_language_code: str) -> str:
     )
 
 
+def provider_for_model(model: str) -> str:
+    """Decide which API backend serves a model.
+
+    OpenRouter models use a ``provider/model`` form (with a slash). DeepSeek's
+    own model names (e.g. ``deepseek-v4-flash``) have no slash and start with
+    ``deepseek``. Everything else defaults to OpenRouter.
+    """
+
+    name = model.strip().lower()
+    if "/" in name:
+        return PROVIDER_OPENROUTER
+    if name.startswith("deepseek"):
+        return PROVIDER_DEEPSEEK
+    return PROVIDER_OPENROUTER
+
+
+def provider_label(provider: str) -> str:
+    return "DeepSeek" if provider == PROVIDER_DEEPSEEK else "OpenRouter"
+
+
+def endpoint_for_provider(provider: str) -> str:
+    return DEEPSEEK_URL if provider == PROVIDER_DEEPSEEK else OPENROUTER_URL
+
+
+def api_key_for_provider(provider: str, settings: AppSettings) -> str:
+    if provider == PROVIDER_DEEPSEEK:
+        return settings.deepseek_api_key.strip()
+    return settings.api_key.strip()
+
+
 def reasoning_config_for_request(model: str, settings: AppSettings) -> dict | None:
     if model.strip() == settings.primary_model.strip():
         return settings.primary_reasoning_config
@@ -87,6 +120,21 @@ def extract_output_text(data: dict) -> str:
                     return text
 
     return ""
+
+
+def extract_deepseek_output_text(data: dict) -> str:
+    for choice in data.get("choices") or []:
+        message = choice.get("message") or {}
+        text = str(message.get("content") or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def extract_output_text_for(provider: str, data: dict) -> str:
+    if provider == PROVIDER_DEEPSEEK:
+        return extract_deepseek_output_text(data)
+    return extract_output_text(data)
 
 
 def cache_key_for(source_text: str, settings: AppSettings) -> tuple[str, str, str]:
@@ -136,12 +184,34 @@ def store_cached_translation(
             _TRANSLATION_CACHE.popitem(last=False)
 
 
-def build_headers(api_key: str, app_name: str) -> dict[str, str]:
-    return {
+def build_headers(api_key: str, app_name: str, provider: str = PROVIDER_OPENROUTER) -> dict[str, str]:
+    headers = {
         "Authorization": f"Bearer {api_key.strip()}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://localhost/quicktranslate",
-        "X-Title": app_name,
+    }
+    if provider == PROVIDER_OPENROUTER:
+        headers["HTTP-Referer"] = "https://localhost/quicktranslate"
+        headers["X-Title"] = app_name
+    return headers
+
+
+def prepare_deepseek_request(
+    source_text: str,
+    settings: AppSettings,
+    model: str,
+) -> dict:
+    return {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": build_instructions(settings.target_language_code),
+            },
+            {"role": "user", "content": source_text},
+        ],
+        "max_tokens": estimate_max_output_tokens(source_text),
+        "temperature": 0.0,
+        "stream": False,
     }
 
 
@@ -150,6 +220,9 @@ def prepare_request(
     settings: AppSettings,
     model: str,
 ) -> dict:
+    if provider_for_model(model) == PROVIDER_DEEPSEEK:
+        return prepare_deepseek_request(source_text, settings, model)
+
     payload = {
         "model": model,
         "input": source_text,
@@ -169,11 +242,16 @@ def prepare_request(
     return payload
 
 
-def failure_from_status(status_code: int, detail: str, model: str) -> RequestFailure:
+def failure_from_status(
+    status_code: int,
+    detail: str,
+    model: str,
+    label: str = "OpenRouter",
+) -> RequestFailure:
     if status_code in {401, 403}:
-        user_message = "OpenRouter API Key를 확인해 주세요."
+        user_message = f"{label} API Key를 확인해 주세요."
     elif status_code == 402:
-        user_message = "OpenRouter 크레딧이 부족합니다."
+        user_message = f"{label} 크레딧이 부족합니다."
     elif status_code == 404:
         user_message = "선택한 번역 모델을 찾을 수 없습니다."
     elif status_code == 422:
@@ -198,12 +276,14 @@ def send_request(
     payload: dict,
     headers: dict[str, str],
     settings: AppSettings,
+    url: str = OPENROUTER_URL,
+    label: str = "OpenRouter",
 ) -> dict:
     model = payload["model"]
 
     try:
         response = SESSION.post(
-            OPENROUTER_URL,
+            url,
             headers=headers,
             json=payload,
             timeout=(CONNECT_TIMEOUT_SECONDS, settings.request_timeout_seconds),
@@ -238,7 +318,7 @@ def send_request(
     except requests.HTTPError as exc:
         detail = exc.response.text if exc.response is not None else str(exc)
         status_code = exc.response.status_code if exc.response is not None else 0
-        raise RuntimeError(failure_from_status(status_code, detail, model)) from exc
+        raise RuntimeError(failure_from_status(status_code, detail, model, label)) from exc
 
     try:
         return response.json()
@@ -271,9 +351,6 @@ def request_translation(
     *,
     app_name: str = "QuickTranslate",
 ) -> TranslationResult:
-    if not settings.api_key.strip():
-        raise TranslationError("OpenRouter API Key가 설정되지 않았습니다.")
-
     source_text = source_text.strip()
     if not source_text:
         raise TranslationError("번역할 텍스트가 비어 있습니다.")
@@ -282,7 +359,6 @@ def request_translation(
     if cached is not None:
         return cached
 
-    headers = build_headers(settings.api_key, app_name)
     models = [settings.primary_model.strip()]
     fallback_model = settings.fallback_model.strip()
     if fallback_model and fallback_model != models[0]:
@@ -290,11 +366,33 @@ def request_translation(
 
     last_failure: RequestFailure | None = None
     for index, model in enumerate(models):
+        provider = provider_for_model(model)
+        label = provider_label(provider)
+        api_key = api_key_for_provider(provider, settings)
+        if not api_key:
+            failure = RequestFailure(
+                user_message=f"{label} API Key가 설정되지 않았습니다.",
+                log_message=f"{model} missing {label} API key",
+                retryable=False,
+            )
+            log_failure(model, failure)
+            last_failure = failure
+            if index == 0 and len(models) > 1:
+                continue
+            break
+
+        headers = build_headers(api_key, app_name, provider)
         payload = prepare_request(source_text, settings, model)
 
         try:
-            response_data = send_request(payload, headers, settings)
-            translated_text = extract_output_text(response_data)
+            response_data = send_request(
+                payload,
+                headers,
+                settings,
+                url=endpoint_for_provider(provider),
+                label=label,
+            )
+            translated_text = extract_output_text_for(provider, response_data)
             if not translated_text:
                 failure = RequestFailure(
                     user_message="번역 응답이 비어 있습니다.",

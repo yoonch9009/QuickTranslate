@@ -4,12 +4,19 @@ import unittest
 
 from quicktranslate.settings import AppSettings
 from quicktranslate.translator import (
+    PROVIDER_DEEPSEEK,
+    PROVIDER_OPENROUTER,
     RequestFailure,
     TranslationResult,
+    api_key_for_provider,
+    endpoint_for_provider,
     estimate_max_output_tokens,
+    extract_deepseek_output_text,
     extract_output_text,
+    extract_output_text_for,
     load_cached_translation,
     prepare_request,
+    provider_for_model,
     should_retry_with_fallback,
     store_cached_translation,
 )
@@ -18,7 +25,9 @@ from quicktranslate.translator import (
 class TranslatorTests(unittest.TestCase):
     def test_prepare_request_passes_reasoning_config_by_model(self) -> None:
         settings = AppSettings(
+            primary_model="qwen/qwen3.5-flash-02-23",
             primary_reasoning_config={"effort": "high", "exclude": True},
+            fallback_model="google/gemma-4-26b-a4b-it",
             fallback_reasoning_config={"max_tokens": 2048, "enabled": True},
         )
 
@@ -33,6 +42,7 @@ class TranslatorTests(unittest.TestCase):
 
     def test_prepare_request_omits_reasoning_when_not_configured(self) -> None:
         settings = AppSettings(
+            primary_model="qwen/qwen3.5-flash-02-23",
             primary_reasoning_config=None,
             fallback_reasoning_config=None,
         )
@@ -40,6 +50,45 @@ class TranslatorTests(unittest.TestCase):
         payload = prepare_request("hello", settings, settings.primary_model)
 
         self.assertNotIn("reasoning", payload)
+
+    def test_provider_for_model_routes_deepseek_and_openrouter(self) -> None:
+        self.assertEqual(provider_for_model("deepseek-v4-flash"), PROVIDER_DEEPSEEK)
+        self.assertEqual(provider_for_model("deepseek-chat"), PROVIDER_DEEPSEEK)
+        self.assertEqual(provider_for_model("tencent/hy3-preview"), PROVIDER_OPENROUTER)
+        self.assertEqual(
+            provider_for_model("deepseek/deepseek-chat"), PROVIDER_OPENROUTER
+        )
+
+    def test_prepare_request_builds_chat_payload_for_deepseek(self) -> None:
+        settings = AppSettings(target_language_code="ko")
+
+        payload = prepare_request("hello", settings, "deepseek-v4-flash")
+
+        self.assertEqual(payload["model"], "deepseek-v4-flash")
+        self.assertEqual(payload["messages"][0]["role"], "system")
+        self.assertEqual(payload["messages"][1]["role"], "user")
+        self.assertEqual(payload["messages"][1]["content"], "hello")
+        self.assertIn("max_tokens", payload)
+        self.assertNotIn("reasoning", payload)
+        self.assertNotIn("provider", payload)
+
+    def test_endpoint_and_key_selection_per_provider(self) -> None:
+        settings = AppSettings(api_key="or-key", deepseek_api_key="ds-key")
+
+        self.assertIn("deepseek", endpoint_for_provider(PROVIDER_DEEPSEEK))
+        self.assertIn("openrouter", endpoint_for_provider(PROVIDER_OPENROUTER))
+        self.assertEqual(api_key_for_provider(PROVIDER_DEEPSEEK, settings), "ds-key")
+        self.assertEqual(api_key_for_provider(PROVIDER_OPENROUTER, settings), "or-key")
+
+    def test_extract_output_text_for_deepseek_reads_choices(self) -> None:
+        data = {"choices": [{"message": {"role": "assistant", "content": "안녕"}}]}
+
+        self.assertEqual(extract_deepseek_output_text(data), "안녕")
+        self.assertEqual(extract_output_text_for(PROVIDER_DEEPSEEK, data), "안녕")
+        self.assertEqual(
+            extract_output_text_for(PROVIDER_OPENROUTER, {"output_text": "hi"}),
+            "hi",
+        )
 
     def test_estimate_max_output_tokens_prefers_lower_limits_for_short_text(self) -> None:
         self.assertEqual(estimate_max_output_tokens("hello"), 120)

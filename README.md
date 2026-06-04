@@ -1,11 +1,13 @@
 # QuickTranslate
 
-윈도우 백그라운드에서 실행되며, 텍스트를 선택한 뒤 `Ctrl + C + C`를 누르면 클립보드의 텍스트를 OpenRouter API로 번역해서 팝업으로 보여주는 가벼운 데스크톱 앱입니다.
+윈도우 백그라운드에서 실행되며, 텍스트를 선택한 뒤 `Ctrl + C + C`를 누르면 클립보드의 텍스트를 OpenRouter 또는 DeepSeek API로 번역해서 팝업으로 보여주는 가벼운 데스크톱 앱입니다.
 
 기본 모델:
 
-- `qwen/qwen3.5-flash-02-23`
-- `google/gemma-4-26b-a4b-it`
+- 기본: `deepseek-v4-flash` (DeepSeek)
+- 폴백: `tencent/hy3-preview` (OpenRouter)
+
+모델 이름에 `/`가 포함되면 OpenRouter, `deepseek`로 시작하면 DeepSeek API로 자동 라우팅됩니다.
 
 기본 대상 언어:
 
@@ -16,9 +18,10 @@
 - 시스템 트레이 상주
 - 글로벌 `Ctrl+C+C` 트리거
 - 클립보드 텍스트 자동 번역
-- OpenRouter `responses` API 사용
-- 모델별 effort 빠른 선택 + reasoning JSON 수동 설정 지원
-- OpenRouter 기본 모델 + 폴백 모델 지원
+- OpenRouter `responses` API 및 DeepSeek `chat/completions` API 사용
+- 모델 이름 기반 자동 프로바이더 라우팅 (OpenRouter / DeepSeek)
+- 모델별 effort 빠른 선택 + reasoning JSON 수동 설정 지원 (OpenRouter)
+- 기본 모델 + 폴백 모델 지원 (서로 다른 프로바이더 혼용 가능)
 - 기본/폴백 모델 직접 입력 지원
 - 텍스트 중심 미니멀 팝업 표시
 - 짧은 클립보드 polling 기반 빠른 캡처
@@ -53,7 +56,8 @@ python -m quicktranslate.app
 pythonw .\run_quicktranslate.pyw
 ```
 
-처음 실행하면 설정 창이 열리며 OpenRouter API Key를 입력해야 합니다.
+처음 실행하면 설정 창이 열리며 OpenRouter API Key 또는 DeepSeek API Key를 입력해야 합니다.
+사용하려는 모델의 프로바이더에 맞는 API Key를 입력하면 됩니다.
 모델 입력칸은 직접 수정할 수 있고, 기본 목록도 실제 모델 ID 그대로 표시됩니다.
 각 모델별로 `effort`를 콤보로 빠르게 고를 수 있고, 필요하면 reasoning JSON으로 세부 설정을 덮어쓸 수 있습니다.
 

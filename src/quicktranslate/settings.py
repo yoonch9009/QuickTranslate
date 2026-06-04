@@ -12,10 +12,11 @@ SETTINGS_PATH = APP_DIR / "settings.json"
 @dataclass
 class AppSettings:
     api_key: str = ""
+    deepseek_api_key: str = ""
     target_language_code: str = "ko"
-    primary_model: str = "qwen/qwen3.5-flash-02-23"
-    primary_reasoning_config: dict[str, Any] | None = field(default_factory=lambda: {"effort": "none"})
-    fallback_model: str = "google/gemma-4-26b-a4b-it"
+    primary_model: str = "deepseek-v4-flash"
+    primary_reasoning_config: dict[str, Any] | None = None
+    fallback_model: str = "tencent/hy3-preview"
     fallback_reasoning_config: dict[str, Any] | None = field(default_factory=lambda: {"effort": "none"})
     trigger_interval_ms: int = 800
     request_timeout_seconds: int = 20
@@ -77,6 +78,10 @@ LANGUAGE_OPTIONS: list[tuple[str, str]] = [
 
 
 MODEL_OPTIONS: list[tuple[str, str]] = [
-    ("qwen/qwen3.5-flash-02-23", "qwen/qwen3.5-flash-02-23"),
-    ("google/gemma-4-26b-a4b-it", "google/gemma-4-26b-a4b-it"),
+    ("DeepSeek · deepseek-v4-flash", "deepseek-v4-flash"),
+    ("DeepSeek · deepseek-chat", "deepseek-chat"),
+    ("DeepSeek · deepseek-reasoner", "deepseek-reasoner"),
+    ("OpenRouter · tencent/hy3-preview", "tencent/hy3-preview"),
+    ("OpenRouter · qwen/qwen3.5-flash-02-23", "qwen/qwen3.5-flash-02-23"),
+    ("OpenRouter · google/gemma-4-26b-a4b-it", "google/gemma-4-26b-a4b-it"),
 ]
