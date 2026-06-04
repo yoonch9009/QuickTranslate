@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from quicktranslate.settings import AppSettings
+from quicktranslate.settings import AppSettings, migrate_model_name
 from quicktranslate.translator import (
     PROVIDER_DEEPSEEK,
     PROVIDER_OPENROUTER,
@@ -18,6 +18,7 @@ from quicktranslate.translator import (
     prepare_request,
     provider_for_model,
     should_retry_with_fallback,
+    split_model,
     store_cached_translation,
 )
 
@@ -25,15 +26,17 @@ from quicktranslate.translator import (
 class TranslatorTests(unittest.TestCase):
     def test_prepare_request_passes_reasoning_config_by_model(self) -> None:
         settings = AppSettings(
-            primary_model="qwen/qwen3.5-flash-02-23",
+            primary_model="openrouter/qwen/qwen3.5-flash-02-23",
             primary_reasoning_config={"effort": "high", "exclude": True},
-            fallback_model="google/gemma-4-26b-a4b-it",
+            fallback_model="openrouter/google/gemma-4-26b-a4b-it",
             fallback_reasoning_config={"max_tokens": 2048, "enabled": True},
         )
 
         qwen_payload = prepare_request("hello", settings, settings.primary_model)
         gemma_payload = prepare_request("hello", settings, settings.fallback_model)
 
+        # The "<provider>/" prefix is stripped before reaching OpenRouter.
+        self.assertEqual(qwen_payload["model"], "qwen/qwen3.5-flash-02-23")
         self.assertEqual(qwen_payload["reasoning"]["effort"], "high")
         self.assertTrue(qwen_payload["reasoning"]["exclude"])
         self.assertEqual(gemma_payload["reasoning"]["max_tokens"], 2048)
@@ -42,7 +45,7 @@ class TranslatorTests(unittest.TestCase):
 
     def test_prepare_request_omits_reasoning_when_not_configured(self) -> None:
         settings = AppSettings(
-            primary_model="qwen/qwen3.5-flash-02-23",
+            primary_model="openrouter/qwen/qwen3.5-flash-02-23",
             primary_reasoning_config=None,
             fallback_reasoning_config=None,
         )
@@ -51,18 +54,37 @@ class TranslatorTests(unittest.TestCase):
 
         self.assertNotIn("reasoning", payload)
 
-    def test_provider_for_model_routes_deepseek_and_openrouter(self) -> None:
-        self.assertEqual(provider_for_model("deepseek-v4-flash"), PROVIDER_DEEPSEEK)
-        self.assertEqual(provider_for_model("deepseek-chat"), PROVIDER_DEEPSEEK)
-        self.assertEqual(provider_for_model("tencent/hy3-preview"), PROVIDER_OPENROUTER)
+    def test_split_model_parses_provider_prefix(self) -> None:
         self.assertEqual(
-            provider_for_model("deepseek/deepseek-chat"), PROVIDER_OPENROUTER
+            split_model("deepseek/deepseek-v4-flash"),
+            (PROVIDER_DEEPSEEK, "deepseek-v4-flash"),
+        )
+        self.assertEqual(
+            split_model("openrouter/tencent/hy3-preview"),
+            (PROVIDER_OPENROUTER, "tencent/hy3-preview"),
+        )
+        self.assertEqual(
+            split_model("openrouter/deepseek/deepseek-v4-flash"),
+            (PROVIDER_OPENROUTER, "deepseek/deepseek-v4-flash"),
+        )
+        # Unknown / unprefixed ids pass through to OpenRouter unchanged.
+        self.assertEqual(
+            split_model("tencent/hy3-preview"),
+            (PROVIDER_OPENROUTER, "tencent/hy3-preview"),
+        )
+
+    def test_provider_for_model_routes_deepseek_and_openrouter(self) -> None:
+        self.assertEqual(provider_for_model("deepseek/deepseek-v4-flash"), PROVIDER_DEEPSEEK)
+        self.assertEqual(provider_for_model("deepseek/deepseek-v4-pro"), PROVIDER_DEEPSEEK)
+        self.assertEqual(provider_for_model("openrouter/tencent/hy3-preview"), PROVIDER_OPENROUTER)
+        self.assertEqual(
+            provider_for_model("openrouter/deepseek/deepseek-v4-flash"), PROVIDER_OPENROUTER
         )
 
     def test_prepare_request_builds_chat_payload_for_deepseek(self) -> None:
         settings = AppSettings(target_language_code="ko")
 
-        payload = prepare_request("hello", settings, "deepseek-v4-flash")
+        payload = prepare_request("hello", settings, "deepseek/deepseek-v4-flash")
 
         self.assertEqual(payload["model"], "deepseek-v4-flash")
         self.assertEqual(payload["messages"][0]["role"], "system")
@@ -71,6 +93,16 @@ class TranslatorTests(unittest.TestCase):
         self.assertIn("max_tokens", payload)
         self.assertNotIn("reasoning", payload)
         self.assertNotIn("provider", payload)
+
+    def test_openrouter_prefix_routes_deepseek_model_to_openrouter(self) -> None:
+        settings = AppSettings(target_language_code="ko")
+
+        payload = prepare_request("hello", settings, "openrouter/deepseek/deepseek-v4-flash")
+
+        # Routed through OpenRouter's responses API, keeping "deepseek/..." as the id.
+        self.assertEqual(payload["model"], "deepseek/deepseek-v4-flash")
+        self.assertIn("input", payload)
+        self.assertNotIn("messages", payload)
 
     def test_endpoint_and_key_selection_per_provider(self) -> None:
         settings = AppSettings(api_key="or-key", deepseek_api_key="ds-key")
@@ -120,6 +152,19 @@ class TranslatorTests(unittest.TestCase):
 
         self.assertIsNotNone(cached)
         self.assertEqual(cached.text, "안녕하세요")
+
+    def test_migrate_model_name_upgrades_legacy_ids(self) -> None:
+        self.assertEqual(migrate_model_name("deepseek-v4-flash"), "deepseek/deepseek-v4-flash")
+        self.assertEqual(migrate_model_name("tencent/hy3-preview"), "openrouter/tencent/hy3-preview")
+        # Already-prefixed values are left untouched.
+        self.assertEqual(
+            migrate_model_name("openrouter/tencent/hy3-preview"),
+            "openrouter/tencent/hy3-preview",
+        )
+        self.assertEqual(
+            migrate_model_name("deepseek/deepseek-v4-pro"),
+            "deepseek/deepseek-v4-pro",
+        )
 
     def test_retry_policy_only_retries_retryable_failures(self) -> None:
         settings = AppSettings(fallback_on_provider_error_only=True)
