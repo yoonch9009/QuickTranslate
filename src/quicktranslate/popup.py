@@ -53,7 +53,15 @@ class TranslationPopup(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        panel_layout = QVBoxLayout()
+        # The rounded background is painted on this child container so the
+        # translucent top-level window only shows the rounded panel (and the
+        # transparent corners around it).
+        self.panel = QWidget()
+        self.panel.setObjectName("panel")
+        self.panel.setAttribute(Qt.WA_StyledBackground, True)
+        self.panel.setMouseTracking(True)
+
+        panel_layout = QVBoxLayout(self.panel)
         panel_layout.setContentsMargins(18, 16, 18, 12)
         panel_layout.setSpacing(10)
 
@@ -82,7 +90,7 @@ class TranslationPopup(QWidget):
 
         panel_layout.addWidget(self.action_bar)
         panel_layout.addWidget(self.text_edit)
-        outer.addLayout(panel_layout)
+        outer.addWidget(self.panel)
 
         self.copy_button.clicked.connect(self.copy_text)
         self.close_button.clicked.connect(self.hide)
@@ -90,6 +98,7 @@ class TranslationPopup(QWidget):
         self.close_shortcut.activated.connect(self.hide)
 
         self.installEventFilter(self)
+        self.panel.installEventFilter(self)
         self.text_edit.viewport().installEventFilter(self)
         self.action_bar.installEventFilter(self)
 
@@ -104,7 +113,7 @@ class TranslationPopup(QWidget):
         self._apply_style()
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
-        if watched in (self, self.text_edit.viewport(), self.action_bar):
+        if watched in (self, self.panel, self.text_edit.viewport(), self.action_bar):
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.LeftButton:
                 local_pos = self._event_pos_in_self(watched, event)
                 edges = self._resize_edges_for_pos(local_pos)
@@ -306,6 +315,10 @@ class TranslationPopup(QWidget):
                 color: #f7f7f5;
             }
             #popup {
+                background: transparent;
+                border: none;
+            }
+            #panel {
                 background: #292929;
                 border: none;
                 border-radius: 12px;
