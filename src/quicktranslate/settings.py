@@ -14,9 +14,9 @@ class AppSettings:
     api_key: str = ""
     deepseek_api_key: str = ""
     target_language_code: str = "ko"
-    primary_model: str = "deepseek-v4-flash"
+    primary_model: str = "deepseek/deepseek-v4-flash"
     primary_reasoning_config: dict[str, Any] | None = None
-    fallback_model: str = "tencent/hy3-preview"
+    fallback_model: str = "openrouter/tencent/hy3-preview"
     fallback_reasoning_config: dict[str, Any] | None = field(default_factory=lambda: {"effort": "none"})
     trigger_interval_ms: int = 800
     request_timeout_seconds: int = 20
@@ -51,6 +51,10 @@ class AppSettings:
             effort = str(data.pop("fallback_reasoning_effort") or "").strip()
             data["fallback_reasoning_config"] = {"effort": effort} if effort else None
 
+        for key in ("primary_model", "fallback_model"):
+            if key in data:
+                data[key] = migrate_model_name(str(data[key]))
+
         defaults = asdict(cls())
         defaults.update(data)
         return cls(**defaults)
@@ -77,11 +81,34 @@ LANGUAGE_OPTIONS: list[tuple[str, str]] = [
 ]
 
 
+# Models use a "<provider>/<model>" syntax. The first path segment selects the
+# backend ("deepseek" or "openrouter") and the rest is the model id sent to it.
+#   - deepseek/deepseek-v4-flash            -> DeepSeek, model "deepseek-v4-flash"
+#   - openrouter/tencent/hy3-preview        -> OpenRouter, model "tencent/hy3-preview"
+#   - openrouter/deepseek/deepseek-v4-flash -> OpenRouter, model "deepseek/deepseek-v4-flash"
 MODEL_OPTIONS: list[tuple[str, str]] = [
-    ("DeepSeek · deepseek-v4-flash", "deepseek-v4-flash"),
-    ("DeepSeek · deepseek-chat", "deepseek-chat"),
-    ("DeepSeek · deepseek-reasoner", "deepseek-reasoner"),
-    ("OpenRouter · tencent/hy3-preview", "tencent/hy3-preview"),
-    ("OpenRouter · qwen/qwen3.5-flash-02-23", "qwen/qwen3.5-flash-02-23"),
-    ("OpenRouter · google/gemma-4-26b-a4b-it", "google/gemma-4-26b-a4b-it"),
+    ("deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-flash"),
+    ("deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-pro"),
+    ("openrouter/deepseek/deepseek-v4-flash", "openrouter/deepseek/deepseek-v4-flash"),
+    ("openrouter/tencent/hy3-preview", "openrouter/tencent/hy3-preview"),
 ]
+
+
+# Maps legacy (pre-prefix) model ids saved by older versions to the new
+# "<provider>/<model>" syntax so existing settings keep working.
+_LEGACY_MODEL_ALIASES: dict[str, str] = {
+    "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
+    "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
+    "deepseek-chat": "deepseek/deepseek-chat",
+    "deepseek-reasoner": "deepseek/deepseek-reasoner",
+    "tencent/hy3-preview": "openrouter/tencent/hy3-preview",
+    "qwen/qwen3.5-flash-02-23": "openrouter/qwen/qwen3.5-flash-02-23",
+    "google/gemma-4-26b-a4b-it": "openrouter/google/gemma-4-26b-a4b-it",
+}
+
+
+def migrate_model_name(model: str) -> str:
+    name = model.strip()
+    if name.startswith(("deepseek/", "openrouter/")):
+        return name
+    return _LEGACY_MODEL_ALIASES.get(name, name)

@@ -55,20 +55,34 @@ def build_instructions(target_language_code: str) -> str:
     )
 
 
-def provider_for_model(model: str) -> str:
-    """Decide which API backend serves a model.
+def split_model(model: str) -> tuple[str, str]:
+    """Split a ``<provider>/<model>`` string into (provider, model_id).
 
-    OpenRouter models use a ``provider/model`` form (with a slash). DeepSeek's
-    own model names (e.g. ``deepseek-v4-flash``) have no slash and start with
-    ``deepseek``. Everything else defaults to OpenRouter.
+    The first path segment selects the backend:
+      - ``deepseek/deepseek-v4-flash``            -> ("deepseek", "deepseek-v4-flash")
+      - ``openrouter/tencent/hy3-preview``        -> ("openrouter", "tencent/hy3-preview")
+      - ``openrouter/deepseek/deepseek-v4-flash`` -> ("openrouter", "deepseek/deepseek-v4-flash")
+
+    Anything without a recognized prefix is treated as an OpenRouter model id
+    passed through unchanged (keeps older ``vendor/model`` ids working).
     """
 
-    name = model.strip().lower()
-    if "/" in name:
-        return PROVIDER_OPENROUTER
-    if name.startswith("deepseek"):
-        return PROVIDER_DEEPSEEK
-    return PROVIDER_OPENROUTER
+    name = model.strip()
+    prefix, slash, rest = name.partition("/")
+    prefix_lower = prefix.lower()
+    if slash and prefix_lower == PROVIDER_DEEPSEEK:
+        return PROVIDER_DEEPSEEK, rest
+    if slash and prefix_lower == PROVIDER_OPENROUTER:
+        return PROVIDER_OPENROUTER, rest
+    return PROVIDER_OPENROUTER, name
+
+
+def provider_for_model(model: str) -> str:
+    return split_model(model)[0]
+
+
+def model_id_for_request(model: str) -> str:
+    return split_model(model)[1]
 
 
 def provider_label(provider: str) -> str:
@@ -220,11 +234,12 @@ def prepare_request(
     settings: AppSettings,
     model: str,
 ) -> dict:
-    if provider_for_model(model) == PROVIDER_DEEPSEEK:
-        return prepare_deepseek_request(source_text, settings, model)
+    provider, model_id = split_model(model)
+    if provider == PROVIDER_DEEPSEEK:
+        return prepare_deepseek_request(source_text, settings, model_id)
 
     payload = {
-        "model": model,
+        "model": model_id,
         "input": source_text,
         "instructions": build_instructions(settings.target_language_code),
         "text": {"format": {"type": "text"}},

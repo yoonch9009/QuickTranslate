@@ -1,7 +1,7 @@
 [project]
 name = "quicktranslate"
-version = "0.1.0"
-description = "Lightweight Windows tray translator using OpenRouter"
+version = "0.2.0"
+description = "Lightweight Windows tray translator using OpenRouter and DeepSeek"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

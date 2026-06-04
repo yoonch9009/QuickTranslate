@@ -4,10 +4,14 @@
 
 기본 모델:
 
-- 기본: `deepseek-v4-flash` (DeepSeek)
-- 폴백: `tencent/hy3-preview` (OpenRouter)
+- 기본: `deepseek/deepseek-v4-flash`
+- 폴백: `openrouter/tencent/hy3-preview`
 
-모델 이름에 `/`가 포함되면 OpenRouter, `deepseek`로 시작하면 DeepSeek API로 자동 라우팅됩니다.
+모델은 `<provider>/<model>` 문법을 사용합니다. 맨 앞 경로 세그먼트가 백엔드를 결정하고 나머지가 실제 모델 ID로 전달됩니다.
+
+- `deepseek/deepseek-v4-flash` → DeepSeek, 모델 `deepseek-v4-flash`
+- `openrouter/tencent/hy3-preview` → OpenRouter, 모델 `tencent/hy3-preview`
+- `openrouter/deepseek/deepseek-v4-flash` → OpenRouter, 모델 `deepseek/deepseek-v4-flash`
 
 기본 대상 언어:
 
@@ -76,10 +80,12 @@ PyInstaller를 사용하면 단일 실행 파일로 묶을 수 있습니다.
 ```powershell
 .\.venv\Scripts\Activate.ps1
 pip install pyinstaller
-pyinstaller --noconsole --name QuickTranslate --paths src run_quicktranslate.pyw
+pyinstaller --noconsole --onefile --name QuickTranslate --paths src run_quicktranslate.pyw
 ```
 
-빌드 결과물은 `dist\QuickTranslate\QuickTranslate.exe`에 생성됩니다.
+빌드 결과물은 단일 실행 파일 `dist\QuickTranslate.exe`에 생성됩니다.
+
+`v*` 형식 태그(예: `v0.2.0`)를 푸시하면 GitHub Actions가 자동으로 onefile exe를 빌드하고 Releases에 첨부합니다.
 
 ## 설정 파일
 
