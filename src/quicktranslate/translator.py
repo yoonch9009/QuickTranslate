@@ -263,9 +263,11 @@ def prepare_request(
         "instructions": build_instructions(settings.target_language_code),
         "text": {"format": {"type": "text"}},
         "max_output_tokens": estimate_max_output_tokens(source_text, PROVIDER_OPENROUTER),
+        # No "sort"/"order" here: setting either disables OpenRouter's default
+        # price-based load balancing. We keep the default strategy and only enable
+        # automatic fallback to other providers on failure.
         "provider": {
             "allow_fallbacks": True,
-            "sort": "latency",
         },
         "store": False,
         "temperature": 0.0,
