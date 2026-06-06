@@ -47,6 +47,7 @@ class TranslationPopup(QWidget):
         self._resize_geometry = QRect()
         self._moving = False
         self._move_offset = QPoint()
+        self._loading = False
         self._global_esc_down = False
         self._global_left_down = False
         self._global_right_down = False
@@ -152,7 +153,15 @@ class TranslationPopup(QWidget):
         return super().eventFilter(watched, event)
 
     def event(self, event: QEvent) -> bool:
-        if event.type() == QEvent.Type.WindowDeactivate and self.isVisible():
+        # While a translation is loading, do not auto-hide on focus loss: the
+        # loading window often loses focus right after appearing (the source app
+        # reclaims it), and hiding there would cancel the in-flight translation.
+        # Explicit dismissals (close button, Esc, outside click) still apply.
+        if (
+            event.type() == QEvent.Type.WindowDeactivate
+            and self.isVisible()
+            and not self._loading
+        ):
             QTimer.singleShot(0, self.hide)
         return super().event(event)
 
@@ -172,18 +181,21 @@ class TranslationPopup(QWidget):
 
     def show_translation(self, text: str, model_name: str) -> None:
         del model_name
+        self._loading = False
         self.copy_button.setEnabled(True)
         self.text_edit.setPlainText(text)
         self._auto_resize_to_content(text)
         self._show_popup(reposition=not self.isVisible())
 
     def show_loading(self, message: str = "번역 중...") -> None:
+        self._loading = True
         self.copy_button.setEnabled(False)
         self.text_edit.setPlainText(message)
         self.resize(self._LOADING_WIDTH, self._LOADING_HEIGHT)
         self._show_popup(reposition=not self.isVisible())
 
     def show_status(self, title: str, message: str) -> None:
+        self._loading = False
         self.copy_button.setEnabled(False)
         self.text_edit.setPlainText(f"{title}\n\n{message}" if title else message)
         self._auto_resize_to_content(self.text_edit.toPlainText())

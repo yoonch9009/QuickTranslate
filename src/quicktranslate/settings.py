@@ -18,6 +18,7 @@ class AppSettings:
     primary_reasoning_config: dict[str, Any] | None = None
     fallback_model: str = "openrouter/tencent/hy3-preview"
     fallback_reasoning_config: dict[str, Any] | None = field(default_factory=lambda: {"effort": "none"})
+    temperature: float = 0.0
     trigger_interval_ms: int = 800
     request_timeout_seconds: int = 20
     fallback_on_provider_error_only: bool = True

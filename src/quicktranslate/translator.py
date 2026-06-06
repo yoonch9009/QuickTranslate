@@ -243,7 +243,7 @@ def prepare_deepseek_request(
         # translations). Disable it so temperature=0 also takes effect.
         "thinking": {"type": "disabled"},
         "max_tokens": estimate_max_output_tokens(source_text, PROVIDER_DEEPSEEK),
-        "temperature": 0.0,
+        "temperature": settings.temperature,
         "stream": False,
     }
 
@@ -270,7 +270,7 @@ def prepare_request(
             "allow_fallbacks": True,
         },
         "store": False,
-        "temperature": 0.0,
+        "temperature": settings.temperature,
     }
     reasoning = reasoning_config_for_request(model, settings)
     if reasoning:
