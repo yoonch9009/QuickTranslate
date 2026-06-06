@@ -24,29 +24,36 @@ DUPLICATE_TRANSLATION_WINDOW_SECONDS = 0.8
 
 
 class TranslationSignals(QObject):
-    success = Signal(str, str)
-    failure = Signal(str)
+    success = Signal(int, str, str)
+    failure = Signal(int, str)
 
 
 class TranslationTask(QRunnable):
-    def __init__(self, source_text: str, settings: AppSettings) -> None:
+    def __init__(self, task_id: int, source_text: str, settings: AppSettings) -> None:
         super().__init__()
+        self.task_id = task_id
         self.source_text = source_text
         self.settings = settings
         self.signals = TranslationSignals()
+        # We keep our own reference to the task (see QuickTranslateApp._active_tasks)
+        # and release it in the result handler. Disabling autoDelete prevents the
+        # thread pool from destroying the task (and its signals object) before the
+        # queued result event is delivered to the GUI thread, which would silently
+        # drop the result and leave the popup stuck on "번역 중...".
+        self.setAutoDelete(False)
 
     @Slot()
     def run(self) -> None:
         try:
             result = request_translation(self.source_text, self.settings)
         except TranslationError as exc:
-            self.signals.failure.emit(str(exc))
+            self.signals.failure.emit(self.task_id, str(exc))
             return
         except Exception as exc:
-            self.signals.failure.emit(f"알 수 없는 오류: {exc}")
+            self.signals.failure.emit(self.task_id, f"알 수 없는 오류: {exc}")
             return
 
-        self.signals.success.emit(result.text, result.model)
+        self.signals.success.emit(self.task_id, result.text, result.model)
 
 
 class QuickTranslateApp(QObject):
@@ -68,6 +75,7 @@ class QuickTranslateApp(QObject):
         self._pending_signature = ""
         self._pending_task_id = 0
         self._task_counter = 0
+        self._active_tasks: dict[int, TranslationTask] = {}
         self._last_success_signature = ""
         self._last_success_at = 0.0
 
@@ -190,24 +198,24 @@ class QuickTranslateApp(QObject):
         self.is_translating = True
         self._pending_signature = signature
         self._task_counter += 1
-        self._pending_task_id = self._task_counter
-        task_id = self._pending_task_id
+        task_id = self._task_counter
+        self._pending_task_id = task_id
         self.popup.show_loading()
 
-        task = TranslationTask(source_text, self.settings)
-        task.signals.success.connect(
-            lambda text, model, tid=task_id: self._handle_translation_success(tid, text, model)
-        )
-        task.signals.failure.connect(
-            lambda message, tid=task_id: self._handle_translation_failure(tid, message)
-        )
+        task = TranslationTask(task_id, source_text, self.settings)
+        # Connect to bound methods (persistent receiver) and keep a strong
+        # reference to the task until its result arrives, so the queued result
+        # event is never dropped before reaching the GUI thread.
+        task.signals.success.connect(self._handle_translation_success)
+        task.signals.failure.connect(self._handle_translation_failure)
+        self._active_tasks[task_id] = task
         self.thread_pool.start(task)
 
     def _cancel_active_translation(self) -> None:
-        # The popup was closed (close button, Esc, click outside, or focus loss).
-        # Abandon any in-flight translation so its result no longer reopens the
-        # popup. The background request itself cannot be force-killed, but its
-        # result is discarded by the task-id guard in the handlers.
+        # The user explicitly dismissed the popup (close button, Esc, or click
+        # outside). Abandon any in-flight translation so its result no longer
+        # reopens the popup. The background request itself cannot be force-killed,
+        # but its result is discarded by the task-id guard in the handlers.
         if not self.is_translating:
             return
         self.is_translating = False
@@ -215,6 +223,7 @@ class QuickTranslateApp(QObject):
         self._pending_task_id = 0
 
     def _handle_translation_success(self, task_id: int, translated_text: str, model_name: str) -> None:
+        self._active_tasks.pop(task_id, None)
         if task_id != self._pending_task_id:
             return
         self.is_translating = False
@@ -223,6 +232,7 @@ class QuickTranslateApp(QObject):
         self.popup.show_translation(translated_text, model_name)
 
     def _handle_translation_failure(self, task_id: int, message: str) -> None:
+        self._active_tasks.pop(task_id, None)
         if task_id != self._pending_task_id:
             return
         self.is_translating = False
