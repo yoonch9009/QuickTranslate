@@ -96,9 +96,9 @@ class TranslationPopup(QWidget):
         outer.addWidget(self.panel)
 
         self.copy_button.clicked.connect(self.copy_text)
-        self.close_button.clicked.connect(self.hide)
+        self.close_button.clicked.connect(self.dismiss)
         self.close_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
-        self.close_shortcut.activated.connect(self.hide)
+        self.close_shortcut.activated.connect(self.dismiss)
 
         self.installEventFilter(self)
         self.panel.installEventFilter(self)
@@ -172,8 +172,14 @@ class TranslationPopup(QWidget):
 
     def hideEvent(self, event) -> None:
         self.global_input_timer.stop()
-        self.closed.emit()
         super().hideEvent(event)
+
+    def dismiss(self) -> None:
+        # Explicit user dismissal (close button, Esc, outside click). Only this —
+        # not incidental hides (focus loss, programmatic hide) — cancels an
+        # in-flight translation, so a transient hide never discards a result.
+        self.closed.emit()
+        self.hide()
 
     def set_auto_size_limits(self, auto_max_width: int, auto_max_height: int) -> None:
         self._auto_max_width = max(auto_max_width, self._MIN_WIDTH)
@@ -371,7 +377,7 @@ class TranslationPopup(QWidget):
 
         esc_down = self._is_virtual_key_down(self._VK_ESCAPE)
         if esc_down and not self._global_esc_down:
-            self.hide()
+            self.dismiss()
             self._global_esc_down = True
             return
         self._global_esc_down = esc_down
@@ -380,13 +386,13 @@ class TranslationPopup(QWidget):
         right_down = self._is_virtual_key_down(self._VK_RBUTTON)
 
         if self._should_hide_for_global_click(left_down, self._global_left_down):
-            self.hide()
+            self.dismiss()
             self._global_left_down = left_down
             self._global_right_down = right_down
             return
 
         if self._should_hide_for_global_click(right_down, self._global_right_down):
-            self.hide()
+            self.dismiss()
             self._global_left_down = left_down
             self._global_right_down = right_down
             return
