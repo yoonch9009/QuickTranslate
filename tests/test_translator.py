@@ -175,6 +175,15 @@ class TranslatorTests(unittest.TestCase):
             "deepseek/deepseek-v4-pro",
         )
 
+    def test_temperature_from_settings_is_used_for_both_providers(self) -> None:
+        settings = AppSettings(temperature=0.7)
+
+        deepseek = prepare_request("hello", settings, "deepseek/deepseek-v4-flash")
+        openrouter = prepare_request("hello", settings, "openrouter/tencent/hy3-preview")
+
+        self.assertEqual(deepseek["temperature"], 0.7)
+        self.assertEqual(openrouter["temperature"], 0.7)
+
     def test_read_timeout_scales_with_text_length(self) -> None:
         settings = AppSettings(request_timeout_seconds=20)
         short = read_timeout_for("hello", settings)

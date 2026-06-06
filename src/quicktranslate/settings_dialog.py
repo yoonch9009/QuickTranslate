@@ -5,6 +5,7 @@ import json
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
     QLineEdit,
@@ -95,6 +96,12 @@ class SettingsDialog(QDialog):
         self.timeout_input.setSuffix(" s")
         self.timeout_input.setValue(settings.request_timeout_seconds)
 
+        self.temperature_input = QDoubleSpinBox()
+        self.temperature_input.setRange(0.0, 2.0)
+        self.temperature_input.setSingleStep(0.1)
+        self.temperature_input.setDecimals(2)
+        self.temperature_input.setValue(settings.temperature)
+
         self.popup_width_input = QSpinBox()
         self.popup_width_input.setRange(360, 900)
         self.popup_width_input.setValue(settings.popup_auto_max_width)
@@ -149,6 +156,7 @@ class SettingsDialog(QDialog):
         form.addRow("폴백 모델", self.fallback_model_combo)
         form.addRow("폴백 effort", self.fallback_effort_combo)
         form.addRow("폴백 reasoning JSON", self.fallback_reasoning_input)
+        form.addRow("temperature", self.temperature_input)
         form.addRow("`Ctrl+C+C` 간격", self.trigger_interval_input)
         form.addRow("API 타임아웃", self.timeout_input)
         form.addRow("자동 최대 너비", self.popup_width_input)
@@ -186,6 +194,7 @@ class SettingsDialog(QDialog):
             primary_reasoning_config=self._parse_reasoning_input(self.primary_reasoning_input),
             fallback_model=(self.fallback_model_combo.currentData() or self.fallback_model_combo.currentText()).strip(),
             fallback_reasoning_config=self._parse_reasoning_input(self.fallback_reasoning_input),
+            temperature=self.temperature_input.value(),
             trigger_interval_ms=self.trigger_interval_input.value(),
             request_timeout_seconds=self.timeout_input.value(),
             fallback_on_provider_error_only=current.fallback_on_provider_error_only,
