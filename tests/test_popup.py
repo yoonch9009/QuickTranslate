@@ -149,6 +149,17 @@ class PopupTests(unittest.TestCase):
         )
         self.assertEqual(self.popup.panel.layout().spacing(), 5)
 
+    def test_header_buttons_have_reliable_vertical_click_targets(self) -> None:
+        self.popup.show_translation("번역", "model")
+        self.application.processEvents()
+
+        for button in (
+            self.popup.pin_button,
+            self.popup.copy_button,
+            self.popup.close_button,
+        ):
+            self.assertGreaterEqual(button.height(), 24)
+
     def test_new_translation_always_starts_unpinned(self) -> None:
         self.popup.set_pinned(True)
 

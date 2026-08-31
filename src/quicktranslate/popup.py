@@ -507,13 +507,14 @@ class TranslationPopup(QWidget):
             #actionBar {
                 background: transparent;
                 border: none;
-                min-height: 14px;
+                min-height: 24px;
             }
             #actionButton {
                 background: transparent;
                 border: none;
                 color: rgba(247, 247, 245, 0.74);
-                padding: 2px 8px;
+                min-height: 24px;
+                padding: 0 8px;
                 font-size: 12px;
                 font-weight: 600;
             }
@@ -528,7 +529,8 @@ class TranslationPopup(QWidget):
                 background: transparent;
                 border: none;
                 color: rgba(247, 247, 245, 0.74);
-                padding: 2px 8px;
+                min-height: 24px;
+                padding: 0 8px;
                 font-size: 12px;
                 font-weight: 600;
             }
