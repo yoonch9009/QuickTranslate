@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/">
+    <file alias="quicktranslate.ico">quicktranslate.ico</file>
+  </qresource>
+</RCC>

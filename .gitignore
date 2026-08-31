@@ -1,0 +1,11 @@
+.venv/
+.venv314/
+__pycache__/
+*.pyc
+build/
+dist/
+build-updated/
+dist-updated/
+*.egg-info/
+deployment/
+release/

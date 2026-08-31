@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="128" y1="96" x2="896" y2="928" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#252A38"/>
+      <stop offset="1" stop-color="#12151D"/>
+    </linearGradient>
+    <linearGradient id="violet" x1="220" y1="238" x2="650" y2="602" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8B7CFF"/>
+      <stop offset="1" stop-color="#5B55E8"/>
+    </linearGradient>
+    <linearGradient id="teal" x1="378" y1="426" x2="836" y2="800" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#34E0D0"/>
+      <stop offset="1" stop-color="#00AEBE"/>
+    </linearGradient>
+    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="22" stdDeviation="22" flood-color="#080A0F" flood-opacity="0.42"/>
+    </filter>
+  </defs>
+
+  <rect x="64" y="64" width="896" height="896" rx="210" fill="url(#tile)"/>
+  <rect x="80" y="80" width="864" height="864" rx="194" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="8"/>
+
+  <g filter="url(#soft-shadow)">
+    <path d="M202 238h374c73 0 132 59 132 132v108c0 73-59 132-132 132H414l-116 90 25-90H202c-73 0-132-59-132-132V370c0-73 59-132 132-132Z" fill="url(#violet)"/>
+    <path d="M448 414h374c73 0 132 59 132 132v108c0 73-59 132-132 132H701l25 90-116-90H448c-73 0-132-59-132-132V546c0-73 59-132 132-132Z" fill="url(#teal)"/>
+  </g>
+
+  <g fill="none" stroke="#FFFFFF" stroke-width="54" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M330 460h316"/>
+    <path d="m588 397 63 63-63 63"/>
+    <path d="M694 636H378"/>
+    <path d="m436 573-63 63 63 63"/>
+  </g>
+</svg>
