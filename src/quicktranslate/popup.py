@@ -250,7 +250,7 @@ class TranslationPopup(QWidget):
 
     def show_loading(self, message: str = "번역 중...") -> None:
         self._loading = True
-        self.copy_button.setEnabled(False)
+        self.copy_button.setEnabled(True)
         self.model_label.setText("")
         self._content_revision += 1
         self.text_edit.setPlainText(message)
@@ -261,13 +261,13 @@ class TranslationPopup(QWidget):
 
     def show_partial_translation(self, text: str) -> None:
         self._loading = True
-        self.copy_button.setEnabled(False)
+        self.copy_button.setEnabled(True)
         self._set_text_and_auto_resize(text, grow_only=True, preserve_scroll=True)
         self._show_popup(reposition=False)
 
     def show_status(self, title: str, message: str) -> None:
         self._loading = False
-        self.copy_button.setEnabled(False)
+        self.copy_button.setEnabled(True)
         self.model_label.setText("")
         text = f"{title}\n\n{message}" if title else message
         self._set_text_and_auto_resize(text)

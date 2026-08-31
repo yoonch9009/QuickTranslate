@@ -174,6 +174,16 @@ class PopupTests(unittest.TestCase):
             style,
         )
 
+    def test_copy_button_stays_active_while_visible_text_changes(self) -> None:
+        self.popup.show_loading()
+        self.assertTrue(self.popup.copy_button.isEnabled())
+
+        self.popup.show_partial_translation("작성 중인 번역")
+        self.assertTrue(self.popup.copy_button.isEnabled())
+
+        self.popup.show_status("안내", "상태 메시지")
+        self.assertTrue(self.popup.copy_button.isEnabled())
+
     def test_new_translation_always_starts_unpinned(self) -> None:
         self.popup.set_pinned(True)
 
