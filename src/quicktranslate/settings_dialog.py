@@ -601,7 +601,7 @@ class SettingsDialog(QDialog):
             return
         self._saved_model_profiles[name] = profile
         self._persist_saved_profiles()
-        self._refresh_profile_names(name)
+        self._refresh_profile_names()
 
     def _load_model_profile(self, slot: str) -> None:
         name = self.profile_name_combo.currentText().strip()
@@ -630,6 +630,9 @@ class SettingsDialog(QDialog):
         self.profile_name_combo.addItems(sorted(self._saved_model_profiles))
         if selected:
             self.profile_name_combo.setCurrentText(selected)
+            return
+        self.profile_name_combo.setCurrentIndex(-1)
+        self.profile_name_combo.clearEditText()
 
     @staticmethod
     def _update_reasoning_status(

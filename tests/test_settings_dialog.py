@@ -97,13 +97,46 @@ class SettingsDialogTests(unittest.TestCase):
             dialog._save_model_profile("primary")
 
         self.assertEqual(save.call_count, 1)
+        self.assertEqual(dialog.profile_name_combo.currentText(), "")
         dialog.primary_model_combo.setEditText("openrouter/z-ai/glm-5.3-flash")
+        dialog.profile_name_combo.setCurrentText("Qwen 번역")
         dialog._load_model_profile("primary")
         restored = dialog._capture_model_slot("primary")
         self.assertEqual(restored["model"], "qwen/qwen3.8-flash")
         self.assertEqual(restored["temperature"], 0.7)
         self.assertEqual(restored["top_p"], 0.8)
         self.assertEqual(restored["extra_parameters"], {"top_k": 20})
+        dialog.deleteLater()
+
+    def test_primary_then_fallback_save_creates_two_distinct_profiles(self) -> None:
+        current = AppSettings(
+            primary_model="qwen/qwen3.8-flash",
+            primary_temperature=0.7,
+            fallback_model="openrouter/z-ai/glm-5.3-flash",
+            fallback_temperature=1.0,
+        )
+        dialog = SettingsDialog(current)
+
+        with patch.object(current, "save"):
+            dialog._save_model_profile("primary")
+            self.assertEqual(dialog.profile_name_combo.currentText(), "")
+            dialog._save_model_profile("fallback")
+
+        profiles = dialog._saved_model_profiles
+        self.assertEqual(len(profiles), 2)
+        self.assertEqual(
+            profiles["qwen/qwen3.8-flash"]["model"],
+            "qwen/qwen3.8-flash",
+        )
+        self.assertEqual(
+            profiles["openrouter/z-ai/glm-5.3-flash"]["model"],
+            "openrouter/z-ai/glm-5.3-flash",
+        )
+        self.assertEqual(profiles["qwen/qwen3.8-flash"]["temperature"], 0.7)
+        self.assertEqual(
+            profiles["openrouter/z-ai/glm-5.3-flash"]["temperature"],
+            1.0,
+        )
         dialog.deleteLater()
 
 
