@@ -61,12 +61,15 @@ class TranslationTask(QRunnable):
         source_text: str,
         image_data_url: str | None,
         settings: AppSettings,
+        *,
+        only_model: str | None = None,
     ) -> None:
         super().__init__()
         self.task_id = task_id
         self.source_text = source_text
         self.image_data_url = image_data_url
         self.settings = settings
+        self.only_model = only_model
         self.signals = TranslationSignals()
         self._partial_text = ""
         self._last_partial_emit_at = 0.0
@@ -80,6 +83,7 @@ class TranslationTask(QRunnable):
                 self.settings,
                 image_data_url=self.image_data_url,
                 on_delta=self._handle_delta,
+                only_model=self.only_model,
             )
         except TranslationError as exc:
             self.signals.failure.emit(self.task_id, str(exc))
@@ -120,6 +124,10 @@ class QuickTranslateApp(QObject):
         self._active_tasks: dict[int, TranslationTask] = {}
         self._task_popups: dict[int, TranslationPopup] = {}
         self._task_signatures: dict[int, str] = {}
+        self._comparison_task_popups: dict[int, TranslationPopup] = {}
+        self._popup_sources: dict[
+            TranslationPopup, tuple[str, str | None]
+        ] = {}
         self._last_success_signature = ""
         self._last_success_at = 0.0
 
@@ -164,6 +172,9 @@ class QuickTranslateApp(QObject):
         popup.setWindowIcon(self.app_icon)
         popup.set_always_pin_mode(self._always_pin_new_popups)
         popup.always_pin_changed.connect(self._set_always_pin_new_popups)
+        popup.comparison_requested.connect(
+            lambda popup=popup: self._start_comparison(popup)
+        )
         popup.closed.connect(
             lambda retained_popup=popup: self._handle_popup_closed(retained_popup)
         )
@@ -177,6 +188,7 @@ class QuickTranslateApp(QObject):
 
     def _handle_popup_closed(self, popup: TranslationPopup) -> None:
         self._cancel_popup_translations(popup)
+        self._popup_sources.pop(popup, None)
         if popup is self.popup:
             return
         if popup in self._retained_popups:
@@ -263,6 +275,9 @@ class QuickTranslateApp(QObject):
         current_is_translating = any(
             popup is self.popup for popup in self._task_popups.values()
         )
+        current_is_translating = current_is_translating or any(
+            popup is self.popup for popup in self._comparison_task_popups.values()
+        )
         return not current_is_translating or self.popup.is_pinned
 
     def _poll_clipboard_capture(self) -> None:
@@ -307,6 +322,7 @@ class QuickTranslateApp(QObject):
         cached = load_cached_translation(source_text, self.settings, image_data_url)
         if cached is not None:
             self._prepare_popup_for_new_translation()
+            self._popup_sources[self.popup] = (source_text, image_data_url)
             self._record_success(signature)
             self.popup.show_translation(
                 cached.text,
@@ -314,6 +330,7 @@ class QuickTranslateApp(QObject):
                 used_fallback=cached.model != self.settings.primary_model,
                 reasoning_effort=self._reasoning_effort_for_display(cached.model),
             )
+            self._set_comparison_available(self.popup, cached.model)
             return
 
         now = monotonic()
@@ -326,6 +343,7 @@ class QuickTranslateApp(QObject):
             return
 
         self._prepare_popup_for_new_translation()
+        self._popup_sources[self.popup] = (source_text, image_data_url)
         self._task_counter += 1
         task_id = self._task_counter
         self.popup.show_loading()
@@ -348,6 +366,13 @@ class QuickTranslateApp(QObject):
         for task_id in task_ids:
             self._task_popups.pop(task_id, None)
             self._task_signatures.pop(task_id, None)
+        comparison_ids = [
+            task_id
+            for task_id, task_popup in self._comparison_task_popups.items()
+            if task_popup is popup
+        ]
+        for task_id in comparison_ids:
+            self._comparison_task_popups.pop(task_id, None)
 
     def _handle_translation_success(
         self,
@@ -367,6 +392,7 @@ class QuickTranslateApp(QObject):
             used_fallback=model_name != self.settings.primary_model,
             reasoning_effort=self._reasoning_effort_for_display(model_name),
         )
+        self._set_comparison_available(popup, model_name)
 
     def _handle_translation_partial(self, task_id: int, translated_text: str) -> None:
         popup = self._task_popups.get(task_id)
@@ -381,6 +407,75 @@ class QuickTranslateApp(QObject):
         if popup is None:
             return
         popup.show_status("오류", message)
+
+    def _set_comparison_available(
+        self, popup: TranslationPopup, model_name: str
+    ) -> None:
+        primary_model = self.settings.primary_model.strip()
+        fallback_model = self.settings.fallback_model.strip()
+        popup.set_comparison_available(
+            bool(fallback_model)
+            and fallback_model != primary_model
+            and model_name == primary_model
+            and popup in self._popup_sources
+        )
+
+    def _start_comparison(self, popup: TranslationPopup) -> None:
+        source = self._popup_sources.get(popup)
+        fallback_model = self.settings.fallback_model.strip()
+        primary_model = self.settings.primary_model.strip()
+        if source is None or not fallback_model or fallback_model == primary_model:
+            return
+        if popup in self._comparison_task_popups.values():
+            return
+
+        self._task_counter += 1
+        task_id = self._task_counter
+        source_text, image_data_url = source
+        popup.show_comparison_loading(
+            fallback_model,
+            self._reasoning_effort_for_display(fallback_model),
+        )
+        task = TranslationTask(
+            task_id,
+            source_text,
+            image_data_url,
+            self.settings,
+            only_model=fallback_model,
+        )
+        task.signals.success.connect(self._handle_comparison_success)
+        task.signals.partial.connect(self._handle_comparison_partial)
+        task.signals.failure.connect(self._handle_comparison_failure)
+        self._active_tasks[task_id] = task
+        self._comparison_task_popups[task_id] = popup
+        self.thread_pool.start(task)
+
+    def _handle_comparison_partial(self, task_id: int, translated_text: str) -> None:
+        popup = self._comparison_task_popups.get(task_id)
+        if popup is not None:
+            popup.show_comparison_partial(translated_text)
+
+    def _handle_comparison_success(
+        self,
+        task_id: int,
+        translated_text: str,
+        model_name: str,
+    ) -> None:
+        self._active_tasks.pop(task_id, None)
+        popup = self._comparison_task_popups.pop(task_id, None)
+        if popup is None:
+            return
+        popup.show_comparison_result(
+            translated_text,
+            model_name,
+            self._reasoning_effort_for_display(model_name),
+        )
+
+    def _handle_comparison_failure(self, task_id: int, message: str) -> None:
+        self._active_tasks.pop(task_id, None)
+        popup = self._comparison_task_popups.pop(task_id, None)
+        if popup is not None:
+            popup.show_comparison_error(message, self.settings.fallback_model)
 
     def _show_error(self, message: str) -> None:
         self.popup.show_status("오류", message)

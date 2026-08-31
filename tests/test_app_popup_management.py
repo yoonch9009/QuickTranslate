@@ -17,6 +17,11 @@ class FakePopup:
         self.always_pin_mode = False
         self.partial_texts: list[str] = []
         self.translations: list[tuple[str, str, bool, str]] = []
+        self.comparison_available = False
+        self.comparison_loading: list[tuple[str, str]] = []
+        self.comparison_partials: list[str] = []
+        self.comparison_results: list[tuple[str, str, str]] = []
+        self.comparison_errors: list[tuple[str, str]] = []
 
     def isVisible(self) -> bool:
         return self._visible
@@ -30,6 +35,23 @@ class FakePopup:
 
     def set_pinned(self, pinned: bool) -> None:
         self.is_pinned = pinned
+
+    def set_comparison_available(self, available: bool) -> None:
+        self.comparison_available = available
+
+    def show_comparison_loading(self, model: str, reasoning_effort: str) -> None:
+        self.comparison_loading.append((model, reasoning_effort))
+
+    def show_comparison_partial(self, text: str) -> None:
+        self.comparison_partials.append(text)
+
+    def show_comparison_result(
+        self, text: str, model: str, reasoning_effort: str
+    ) -> None:
+        self.comparison_results.append((text, model, reasoning_effort))
+
+    def show_comparison_error(self, message: str, model: str) -> None:
+        self.comparison_errors.append((message, model))
 
     def show_partial_translation(self, text: str) -> None:
         self.partial_texts.append(text)
@@ -89,6 +111,7 @@ class AppPopupManagementTests(unittest.TestCase):
             popup=current,
             _retained_popups=[retained],
             _cancel_popup_translations=cancel,
+            _popup_sources={retained: ("원문", None)},
         )
 
         QuickTranslateApp._handle_popup_closed(app, retained)
@@ -96,6 +119,7 @@ class AppPopupManagementTests(unittest.TestCase):
         self.assertEqual(app._retained_popups, [])
         retained.delete_later.assert_called_once_with()
         cancel.assert_called_once_with(retained)
+        self.assertNotIn(retained, app._popup_sources)
 
     def test_always_pin_mode_pins_future_popup_without_changing_old_popup(self) -> None:
         pinned = FakePopup(visible=True, pinned=True)
@@ -125,6 +149,20 @@ class AppPopupManagementTests(unittest.TestCase):
         popup.is_pinned = False
         self.assertFalse(QuickTranslateApp._can_begin_clipboard_capture(app))
 
+    def test_active_comparison_obeys_the_same_pin_capture_rule(self) -> None:
+        popup = FakePopup(visible=True, pinned=False)
+        app = SimpleNamespace(
+            popup=popup,
+            pending_clipboard_capture=False,
+            _task_popups={},
+            _comparison_task_popups={1: popup},
+        )
+
+        self.assertFalse(QuickTranslateApp._can_begin_clipboard_capture(app))
+
+        popup.is_pinned = True
+        self.assertTrue(QuickTranslateApp._can_begin_clipboard_capture(app))
+
     def test_partial_results_are_routed_to_each_tasks_own_popup(self) -> None:
         first = FakePopup(visible=True, pinned=True)
         second = FakePopup(visible=True, pinned=False)
@@ -148,6 +186,7 @@ class AppPopupManagementTests(unittest.TestCase):
             settings=SimpleNamespace(primary_model="model"),
             _record_success=record_success,
             _reasoning_effort_for_display=Mock(return_value="low"),
+            _set_comparison_available=Mock(),
         )
 
         QuickTranslateApp._handle_translation_success(app, 1, "완료", "model")
@@ -156,6 +195,74 @@ class AppPopupManagementTests(unittest.TestCase):
         self.assertEqual(newer.translations, [])
         self.assertIn(2, app._task_popups)
         record_success.assert_called_once_with("first")
+        app._set_comparison_available.assert_called_once_with(pinned, "model")
+
+    def test_comparison_requests_only_the_configured_fallback_model(self) -> None:
+        popup = FakePopup(visible=True, pinned=False)
+        fallback_model = "openrouter/deepseek/deepseek-v4-flash-vision-exp"
+        settings = SimpleNamespace(
+            primary_model="openrouter/z-ai/glm-5.3-flash",
+            fallback_model=fallback_model,
+        )
+        signals = SimpleNamespace(success=Mock(), partial=Mock(), failure=Mock())
+        task = SimpleNamespace(signals=signals)
+        app = SimpleNamespace(
+            settings=settings,
+            _popup_sources={popup: ("원문", None)},
+            _comparison_task_popups={},
+            _active_tasks={},
+            _task_counter=4,
+            _reasoning_effort_for_display=Mock(return_value="none"),
+            _handle_comparison_success=Mock(),
+            _handle_comparison_partial=Mock(),
+            _handle_comparison_failure=Mock(),
+            thread_pool=Mock(),
+        )
+
+        with patch("quicktranslate.app.TranslationTask", return_value=task) as task_type:
+            QuickTranslateApp._start_comparison(app, popup)
+
+        task_type.assert_called_once_with(
+            5,
+            "원문",
+            None,
+            settings,
+            only_model=fallback_model,
+        )
+        self.assertEqual(popup.comparison_loading, [(fallback_model, "none")])
+        self.assertIs(app._comparison_task_popups[5], popup)
+        app.thread_pool.start.assert_called_once_with(task)
+
+    def test_comparison_results_are_routed_to_the_requesting_popup(self) -> None:
+        popup = FakePopup(visible=True, pinned=True)
+        app = SimpleNamespace(
+            settings=SimpleNamespace(fallback_model="fallback"),
+            _active_tasks={7: object()},
+            _comparison_task_popups={7: popup},
+            _reasoning_effort_for_display=Mock(return_value="none"),
+        )
+
+        QuickTranslateApp._handle_comparison_partial(app, 7, "작성 중")
+        QuickTranslateApp._handle_comparison_success(app, 7, "완료", "fallback")
+
+        self.assertEqual(popup.comparison_partials, ["작성 중"])
+        self.assertEqual(popup.comparison_results, [("완료", "fallback", "none")])
+        self.assertNotIn(7, app._active_tasks)
+        self.assertNotIn(7, app._comparison_task_popups)
+
+    def test_comparison_failure_stays_in_the_comparison_column(self) -> None:
+        popup = FakePopup(visible=True, pinned=False)
+        app = SimpleNamespace(
+            settings=SimpleNamespace(fallback_model="fallback"),
+            _active_tasks={8: object()},
+            _comparison_task_popups={8: popup},
+        )
+
+        QuickTranslateApp._handle_comparison_failure(app, 8, "요청 실패")
+
+        self.assertEqual(popup.comparison_errors, [("요청 실패", "fallback")])
+        self.assertNotIn(8, app._active_tasks)
+        self.assertNotIn(8, app._comparison_task_popups)
 
     def test_always_pin_toggle_pins_current_and_preserves_older_windows(self) -> None:
         current = FakePopup(visible=True, pinned=False)

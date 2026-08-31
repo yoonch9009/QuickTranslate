@@ -14,6 +14,7 @@ from PySide6.QtGui import (
     QTextDocument,
 )
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
 class TranslationPopup(QWidget):
     closed = Signal()
     always_pin_changed = Signal(bool)
+    comparison_requested = Signal()
     _MIN_WIDTH = 320
     _MIN_HEIGHT = 180
     _EDGE_MARGIN = 6
@@ -60,6 +62,7 @@ class TranslationPopup(QWidget):
         self._move_offset = QPoint()
         self._loading = False
         self._pinned = False
+        self._comparison_mode = False
         self._user_resized = False
         self._content_revision = 0
         self._outside_clicks_enabled_at = 0.0
@@ -106,21 +109,77 @@ class TranslationPopup(QWidget):
         self.always_pin_button.setToolTip(
             "이후 새 번역창을 항상 고정된 상태로 엽니다."
         )
+        self.compare_button = QPushButton("비교")
+        self.compare_button.setToolTip("폴백 모델의 번역과 나란히 비교합니다.")
+        self.compare_button.setEnabled(False)
         self.copy_button = QPushButton("복사")
         self.close_button = QPushButton("닫기")
+        self.compare_button.setObjectName("actionButton")
         self.always_pin_button.setObjectName("alwaysPinButton")
         self.pin_button.setObjectName("pinButton")
         self.copy_button.setObjectName("actionButton")
         self.close_button.setObjectName("actionButton")
+        action_layout.addWidget(self.compare_button)
         action_layout.addWidget(self.always_pin_button)
         action_layout.addWidget(self.pin_button)
         action_layout.addWidget(self.copy_button)
         action_layout.addWidget(self.close_button)
 
+        self.comparison_panel = QWidget()
+        comparison_layout = QHBoxLayout(self.comparison_panel)
+        comparison_layout.setContentsMargins(0, 0, 0, 0)
+        comparison_layout.setSpacing(10)
+
+        primary_column = QWidget()
+        primary_layout = QVBoxLayout(primary_column)
+        primary_layout.setContentsMargins(0, 0, 0, 0)
+        primary_layout.setSpacing(4)
+        self.comparison_primary_label = QLabel()
+        self.comparison_primary_label.setObjectName("comparisonModelLabel")
+        self.comparison_primary_label.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred
+        )
+        self.comparison_primary_edit = QTextEdit()
+        self.comparison_primary_edit.setReadOnly(True)
+        self.comparison_primary_edit.setLineWrapMode(QTextEdit.WidgetWidth)
+        self.comparison_primary_edit.setFrameStyle(0)
+        self.comparison_primary_edit.setObjectName("comparisonResultEdit")
+        primary_layout.addWidget(self.comparison_primary_label)
+        primary_layout.addWidget(self.comparison_primary_edit)
+
+        fallback_column = QWidget()
+        fallback_layout = QVBoxLayout(fallback_column)
+        fallback_layout.setContentsMargins(0, 0, 0, 0)
+        fallback_layout.setSpacing(4)
+        self.comparison_fallback_label = QLabel()
+        self.comparison_fallback_label.setObjectName("comparisonModelLabel")
+        self.comparison_fallback_label.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred
+        )
+        self.comparison_fallback_edit = QTextEdit()
+        self.comparison_fallback_edit.setReadOnly(True)
+        self.comparison_fallback_edit.setLineWrapMode(QTextEdit.WidgetWidth)
+        self.comparison_fallback_edit.setFrameStyle(0)
+        self.comparison_fallback_edit.setObjectName("comparisonResultEdit")
+        fallback_layout.addWidget(self.comparison_fallback_label)
+        fallback_layout.addWidget(self.comparison_fallback_edit)
+
+        comparison_divider = QFrame()
+        comparison_divider.setObjectName("comparisonDivider")
+        comparison_divider.setFrameShape(QFrame.VLine)
+        comparison_layout.addWidget(primary_column, 1)
+        comparison_layout.addWidget(comparison_divider)
+        comparison_layout.addWidget(fallback_column, 1)
+        comparison_layout.setStretch(0, 1)
+        comparison_layout.setStretch(2, 1)
+        self.comparison_panel.hide()
+
         panel_layout.addWidget(self.action_bar)
         panel_layout.addWidget(self.text_edit)
+        panel_layout.addWidget(self.comparison_panel)
         outer.addWidget(self.panel)
 
+        self.compare_button.clicked.connect(self.comparison_requested.emit)
         self.always_pin_button.toggled.connect(self.always_pin_changed.emit)
         self.pin_button.toggled.connect(self.set_pinned)
         self.copy_button.clicked.connect(self.copy_text)
@@ -131,6 +190,8 @@ class TranslationPopup(QWidget):
         self.installEventFilter(self)
         self.panel.installEventFilter(self)
         self.text_edit.viewport().installEventFilter(self)
+        self.comparison_primary_edit.viewport().installEventFilter(self)
+        self.comparison_fallback_edit.viewport().installEventFilter(self)
         self.action_bar.installEventFilter(self)
 
         self.global_input_timer = QTimer(self)
@@ -144,7 +205,14 @@ class TranslationPopup(QWidget):
         self._apply_style()
 
     def eventFilter(self, watched: object, event: QEvent) -> bool:
-        if watched in (self, self.panel, self.text_edit.viewport(), self.action_bar):
+        if watched in (
+            self,
+            self.panel,
+            self.text_edit.viewport(),
+            self.comparison_primary_edit.viewport(),
+            self.comparison_fallback_edit.viewport(),
+            self.action_bar,
+        ):
             if (
                 event.type() == QEvent.Type.MouseButtonPress
                 and event.button() == Qt.LeftButton
@@ -209,6 +277,7 @@ class TranslationPopup(QWidget):
         self._auto_max_height = max(auto_max_height, self._MIN_HEIGHT)
 
     def begin_new_translation(self, *, pinned: bool = False) -> None:
+        self._reset_comparison_view()
         self.set_pinned(pinned)
         self._user_resized = False
 
@@ -228,6 +297,9 @@ class TranslationPopup(QWidget):
         self.always_pin_button.setText("상시")
         self.always_pin_button.blockSignals(previous)
 
+    def set_comparison_available(self, available: bool) -> None:
+        self.compare_button.setEnabled(available and not self._comparison_mode)
+
     def show_translation(
         self,
         text: str,
@@ -236,19 +308,23 @@ class TranslationPopup(QWidget):
         used_fallback: bool = False,
         reasoning_effort: str = "",
     ) -> None:
+        self._reset_comparison_view()
         preserve_scroll = self._loading
         self._loading = False
         self.copy_button.setEnabled(True)
         display_model = model_name.removeprefix("openrouter/")
         prefix = "폴백 · " if used_fallback else ""
         effort_label = f" · {reasoning_effort}" if reasoning_effort else ""
-        self.model_label.setText(prefix + display_model + effort_label)
+        display_label = prefix + display_model + effort_label
+        self.model_label.setText(display_label)
         self.model_label.setToolTip(model_name)
+        self.text_edit.setProperty("translationModelLabel", display_label)
         self._set_text_and_auto_resize(text, preserve_scroll=preserve_scroll)
         self._arm_outside_click_guard()
         self._show_popup(reposition=not self.isVisible())
 
     def show_loading(self, message: str = "번역 중...") -> None:
+        self._reset_comparison_view()
         self._loading = True
         self.copy_button.setEnabled(True)
         self.model_label.setText("")
@@ -266,6 +342,7 @@ class TranslationPopup(QWidget):
         self._show_popup(reposition=False)
 
     def show_status(self, title: str, message: str) -> None:
+        self._reset_comparison_view()
         self._loading = False
         self.copy_button.setEnabled(True)
         self.model_label.setText("")
@@ -275,7 +352,111 @@ class TranslationPopup(QWidget):
         self._show_popup(reposition=not self.isVisible())
 
     def copy_text(self) -> None:
-        QGuiApplication.clipboard().setText(self.text_edit.toPlainText())
+        if self._comparison_mode:
+            text = (
+                f"{self.comparison_primary_label.text()}\n"
+                f"{self.comparison_primary_edit.toPlainText()}\n\n"
+                f"{self.comparison_fallback_label.text()}\n"
+                f"{self.comparison_fallback_edit.toPlainText()}"
+            )
+        else:
+            text = self.text_edit.toPlainText()
+        QGuiApplication.clipboard().setText(text)
+
+    def show_comparison_loading(
+        self, fallback_model: str, reasoning_effort: str = ""
+    ) -> None:
+        self._comparison_mode = True
+        self._loading = True
+        self.compare_button.setEnabled(False)
+        self.model_label.setText("번역 비교")
+        self.model_label.setToolTip("")
+        primary_label = self.text_edit.property("translationModelLabel")
+        self.comparison_primary_label.setText(
+            str(primary_label) if primary_label else "기본 번역"
+        )
+        self.comparison_primary_label.setToolTip(
+            str(primary_label) if primary_label else "기본 번역"
+        )
+        fallback_display = fallback_model.removeprefix("openrouter/")
+        effort_label = f" · {reasoning_effort}" if reasoning_effort else ""
+        self.comparison_fallback_label.setText(
+            f"폴백 · {fallback_display}{effort_label}"
+        )
+        self.comparison_fallback_label.setToolTip(fallback_model)
+        self.comparison_primary_edit.setPlainText(self.text_edit.toPlainText())
+        self.comparison_fallback_edit.setPlainText("비교 번역 중...")
+        self.text_edit.hide()
+        self.comparison_panel.show()
+        if not self._user_resized:
+            self._auto_resize_comparison(grow_only=True)
+        self._show_popup(reposition=False)
+
+    def show_comparison_partial(self, text: str) -> None:
+        self._set_comparison_fallback_text(text, preserve_scroll=True)
+        if not self._user_resized:
+            self._auto_resize_comparison(grow_only=True)
+
+    def show_comparison_result(
+        self,
+        text: str,
+        model_name: str,
+        reasoning_effort: str = "",
+    ) -> None:
+        self._loading = False
+        model_display = model_name.removeprefix("openrouter/")
+        effort_label = f" · {reasoning_effort}" if reasoning_effort else ""
+        self.comparison_fallback_label.setText(
+            f"폴백 · {model_display}{effort_label}"
+        )
+        self.comparison_fallback_label.setToolTip(model_name)
+        self._set_comparison_fallback_text(text, preserve_scroll=True)
+        if not self._user_resized:
+            self._auto_resize_comparison()
+
+    def show_comparison_error(self, message: str, model_name: str) -> None:
+        self._loading = False
+        model_display = model_name.removeprefix("openrouter/")
+        self.comparison_fallback_label.setText(f"폴백 오류 · {model_display}")
+        self.comparison_fallback_label.setToolTip(model_name)
+        self._set_comparison_fallback_text(message, preserve_scroll=False)
+
+    def _reset_comparison_view(self) -> None:
+        self._comparison_mode = False
+        self.compare_button.setEnabled(False)
+        self.comparison_panel.hide()
+        self.text_edit.show()
+
+    def _set_comparison_fallback_text(
+        self, text: str, *, preserve_scroll: bool
+    ) -> None:
+        scroll_bar = self.comparison_fallback_edit.verticalScrollBar()
+        scroll_value = scroll_bar.value() if preserve_scroll else None
+        follow_bottom = preserve_scroll and scroll_value >= scroll_bar.maximum() - 2
+        self.comparison_fallback_edit.setPlainText(text)
+        if scroll_value is not None:
+            target = scroll_bar.maximum() if follow_bottom else scroll_value
+            scroll_bar.setValue(min(target, scroll_bar.maximum()))
+
+    def _auto_resize_comparison(self, *, grow_only: bool = False) -> None:
+        target_width = self._auto_max_width
+        text_width = max(180, (target_width - self._TEXT_CHROME_WIDTH - 10) // 2)
+        heights = []
+        for edit in (self.comparison_primary_edit, self.comparison_fallback_edit):
+            document = QTextDocument(self)
+            document.setDefaultFont(edit.font())
+            document.setPlainText(edit.toPlainText())
+            document.setTextWidth(text_width)
+            heights.append(ceil(document.size().height()))
+        target_height = max(
+            self._MIN_HEIGHT,
+            min(max(heights) + self._TEXT_CHROME_HEIGHT + 22, self._auto_max_height),
+        )
+        target_size = QSize(target_width, target_height)
+        if grow_only:
+            target_size = target_size.expandedTo(self.size())
+        self.resize(target_size)
+        self._keep_inside_available_screen()
 
     def _set_text_and_auto_resize(
         self,
@@ -520,7 +701,7 @@ class TranslationPopup(QWidget):
                 border: none;
                 border-radius: 12px;
             }
-            #resultEdit {
+            #resultEdit, #comparisonResultEdit {
                 background: transparent;
                 border: none;
                 padding: 0;
@@ -548,6 +729,14 @@ class TranslationPopup(QWidget):
             #modelLabel {
                 color: rgba(247, 247, 245, 0.52);
                 font-size: 11px;
+            }
+            #comparisonModelLabel {
+                color: rgba(247, 247, 245, 0.62);
+                font-size: 11px;
+                font-weight: 600;
+            }
+            #comparisonDivider {
+                color: rgba(247, 247, 245, 0.16);
             }
             #pinButton, #alwaysPinButton {
                 background: transparent;

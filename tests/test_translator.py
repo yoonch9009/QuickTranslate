@@ -11,6 +11,7 @@ from quicktranslate.settings import (
 )
 from quicktranslate.translator import (
     RequestFailure,
+    TranslationError,
     TranslationResult,
     estimate_max_output_tokens,
     extract_output_text,
@@ -323,6 +324,73 @@ class TranslatorTests(unittest.TestCase):
 
         self.assertEqual(result.model, settings.fallback_model)
         self.assertIsNone(load_cached_translation("fallback-cache-unique", settings))
+
+    def test_only_model_request_calls_fallback_once_without_primary_or_cache(self) -> None:
+        settings = AppSettings(
+            api_key="test-key",
+            primary_model="openrouter/z-ai/glm-5.3-flash",
+            fallback_model="openrouter/deepseek/deepseek-v4-flash-vision-exp",
+        )
+        with (
+            patch("quicktranslate.translator.MODEL_CATALOG.ensure_model"),
+            patch(
+                "quicktranslate.translator.MODEL_CATALOG.reasoning_for",
+                return_value=EffectiveReasoning({"effort": "none"}, "none", True),
+            ),
+            patch(
+                "quicktranslate.translator.MODEL_CATALOG.supported_parameters_for",
+                return_value=ParameterSupport(frozenset(), True),
+            ),
+            patch(
+                "quicktranslate.translator.send_request",
+                return_value={"output_text": "비교 번역"},
+            ) as send,
+        ):
+            result = request_translation(
+                "compare-only-model-unique",
+                settings,
+                only_model=settings.fallback_model,
+            )
+
+        self.assertEqual(result.model, settings.fallback_model)
+        self.assertEqual(send.call_count, 1)
+        self.assertEqual(
+            send.call_args.args[0]["model"],
+            "deepseek/deepseek-v4-flash-vision-exp",
+        )
+        self.assertIsNone(load_cached_translation("compare-only-model-unique", settings))
+
+    def test_only_model_failure_is_not_retried(self) -> None:
+        settings = AppSettings(
+            api_key="test-key",
+            primary_model="openrouter/z-ai/glm-5.3-flash",
+            fallback_model="openrouter/deepseek/deepseek-v4-flash-vision-exp",
+        )
+        failure = RuntimeError(
+            RequestFailure("비교 실패", "comparison failed", True, status_code=429)
+        )
+        with (
+            patch("quicktranslate.translator.MODEL_CATALOG.ensure_model"),
+            patch(
+                "quicktranslate.translator.MODEL_CATALOG.reasoning_for",
+                return_value=EffectiveReasoning({"effort": "none"}, "none", True),
+            ),
+            patch(
+                "quicktranslate.translator.MODEL_CATALOG.supported_parameters_for",
+                return_value=ParameterSupport(frozenset(), True),
+            ),
+            patch(
+                "quicktranslate.translator.send_request", side_effect=failure
+            ) as send,
+            self.assertRaisesRegex(TranslationError, "비교 실패"),
+        ):
+            request_translation(
+                "compare-failure-unique",
+                settings,
+                only_model=settings.fallback_model,
+            )
+
+        self.assertEqual(send.call_count, 1)
 
     def test_responses_stream_collects_and_emits_only_text_deltas(self) -> None:
         emitted: list[str] = []

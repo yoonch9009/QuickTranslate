@@ -154,12 +154,78 @@ class PopupTests(unittest.TestCase):
         self.application.processEvents()
 
         for button in (
+            self.popup.compare_button,
             self.popup.always_pin_button,
             self.popup.pin_button,
             self.popup.copy_button,
             self.popup.close_button,
         ):
             self.assertGreaterEqual(button.height(), 24)
+
+    def test_compare_button_is_left_of_always_pin_and_emits_request(self) -> None:
+        requests: list[bool] = []
+        self.popup.comparison_requested.connect(lambda: requests.append(True))
+        self.popup.show_translation("기본 번역", "primary", reasoning_effort="low")
+        self.popup.set_comparison_available(True)
+        self.application.processEvents()
+
+        self.popup.compare_button.click()
+
+        self.assertEqual(requests, [True])
+        self.assertLess(
+            self.popup.compare_button.geometry().left(),
+            self.popup.always_pin_button.geometry().left(),
+        )
+
+    def test_comparison_view_keeps_primary_and_streams_fallback(self) -> None:
+        self.popup.show_translation("기본 번역", "primary", reasoning_effort="low")
+        self.popup.set_comparison_available(True)
+
+        self.popup.show_comparison_loading("fallback", "none")
+        self.popup.show_comparison_partial("폴백 작성 중")
+        self.popup.show_comparison_result("폴백 완료", "fallback", "none")
+
+        self.assertTrue(self.popup.text_edit.isHidden())
+        self.assertFalse(self.popup.comparison_panel.isHidden())
+        self.assertEqual(self.popup.comparison_primary_label.text(), "primary · low")
+        self.assertEqual(self.popup.comparison_primary_edit.toPlainText(), "기본 번역")
+        self.assertEqual(
+            self.popup.comparison_fallback_label.text(), "폴백 · fallback · none"
+        )
+        self.assertEqual(self.popup.comparison_fallback_edit.toPlainText(), "폴백 완료")
+        self.assertFalse(self.popup.compare_button.isEnabled())
+        self.popup.copy_text()
+        self.assertEqual(
+            self.application.clipboard().text(),
+            "primary · low\n기본 번역\n\n폴백 · fallback · none\n폴백 완료",
+        )
+        self.application.processEvents()
+        self.assertLessEqual(
+            abs(
+                self.popup.comparison_primary_edit.width()
+                - self.popup.comparison_fallback_edit.width()
+            ),
+            2,
+        )
+
+    def test_comparison_does_not_override_manual_window_size(self) -> None:
+        self.popup.show_translation("기본 번역", "primary")
+        self.popup._start_resize(Qt.RightEdge | Qt.BottomEdge, QPoint())
+        self.popup.resize(580, 420)
+
+        self.popup.show_comparison_loading("fallback")
+        self.popup.show_comparison_result("폴백 번역", "fallback")
+
+        self.assertEqual(self.popup.size(), QSize(580, 420))
+
+    def test_new_translation_resets_comparison_view(self) -> None:
+        self.popup.show_translation("기본 번역", "primary")
+        self.popup.show_comparison_loading("fallback")
+
+        self.popup.begin_new_translation()
+
+        self.assertFalse(self.popup.text_edit.isHidden())
+        self.assertTrue(self.popup.comparison_panel.isHidden())
 
     def test_pin_buttons_only_turn_blue_when_checked(self) -> None:
         style = " ".join(self.popup.styleSheet().split())

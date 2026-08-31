@@ -745,23 +745,31 @@ def request_translation(
     image_data_url: str | None = None,
     app_name: str = "QuickTranslate",
     on_delta: Callable[[str], None] | None = None,
+    only_model: str | None = None,
 ) -> TranslationResult:
     source_text = source_text.strip()
     if not source_text and not image_data_url:
         raise TranslationError("번역할 텍스트나 이미지가 비어 있습니다.")
 
-    models = [settings.primary_model.strip()]
-    fallback_model = settings.fallback_model.strip()
-    if fallback_model and fallback_model != models[0]:
-        models.append(fallback_model)
+    if only_model is not None:
+        requested_model = only_model.strip()
+        if not requested_model:
+            raise TranslationError("비교할 폴백 모델이 설정되지 않았습니다.")
+        models = [requested_model]
+    else:
+        models = [settings.primary_model.strip()]
+        fallback_model = settings.fallback_model.strip()
+        if fallback_model and fallback_model != models[0]:
+            models.append(fallback_model)
 
     for model in models:
         if provider_for_model(model) == PROVIDER_OPENROUTER:
             MODEL_CATALOG.ensure_model(model)
 
-    cached = load_cached_translation(source_text, settings, image_data_url)
-    if cached is not None:
-        return cached
+    if only_model is None:
+        cached = load_cached_translation(source_text, settings, image_data_url)
+        if cached is not None:
+            return cached
 
     last_failure: RequestFailure | None = None
     read_timeout = read_timeout_for(source_text, settings)
@@ -835,7 +843,7 @@ def request_translation(
                 raise TranslationError(failure.user_message)
 
             result = TranslationResult(text=translated_text, model=model)
-            if model == settings.primary_model.strip():
+            if only_model is None and model == settings.primary_model.strip():
                 store_cached_translation(source_text, settings, result, image_data_url)
             return result
         except RuntimeError as exc:
