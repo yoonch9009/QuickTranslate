@@ -178,11 +178,15 @@ class PopupTests(unittest.TestCase):
         )
 
     def test_comparison_view_keeps_primary_and_streams_fallback(self) -> None:
-        self.popup.show_translation("기본 번역", "primary", reasoning_effort="low")
+        self.popup.show_loading()
         self.popup.set_comparison_available(True)
+        self.assertTrue(self.popup.compare_button.isEnabled())
+        self.popup.show_partial_translation("기본 작성 중")
 
-        self.popup.show_comparison_loading("fallback", "none")
+        self.popup.show_comparison_loading("primary", "low", "fallback", "none")
+        self.popup.show_partial_translation("기본 번역")
         self.popup.show_comparison_partial("폴백 작성 중")
+        self.popup.show_translation("기본 번역", "primary", reasoning_effort="low")
         self.popup.show_comparison_result("폴백 완료", "fallback", "none")
 
         self.assertTrue(self.popup.text_edit.isHidden())
@@ -213,19 +217,36 @@ class PopupTests(unittest.TestCase):
         self.popup._start_resize(Qt.RightEdge | Qt.BottomEdge, QPoint())
         self.popup.resize(580, 420)
 
-        self.popup.show_comparison_loading("fallback")
+        self.popup.show_comparison_loading("primary", "", "fallback", "")
         self.popup.show_comparison_result("폴백 번역", "fallback")
 
         self.assertEqual(self.popup.size(), QSize(580, 420))
 
     def test_new_translation_resets_comparison_view(self) -> None:
         self.popup.show_translation("기본 번역", "primary")
-        self.popup.show_comparison_loading("fallback")
+        self.popup.show_comparison_loading("primary", "", "fallback", "")
 
         self.popup.begin_new_translation()
 
         self.assertFalse(self.popup.text_edit.isHidden())
         self.assertTrue(self.popup.comparison_panel.isHidden())
+
+    def test_primary_error_does_not_close_active_comparison(self) -> None:
+        self.popup.show_loading()
+        self.popup.show_comparison_loading("primary", "low", "fallback", "none")
+
+        self.popup.show_translation_error("기본 요청 실패", "primary")
+
+        self.assertFalse(self.popup.comparison_panel.isHidden())
+        self.assertEqual(
+            self.popup.comparison_primary_label.text(), "기본 오류 · primary"
+        )
+        self.assertEqual(
+            self.popup.comparison_primary_edit.toPlainText(), "기본 요청 실패"
+        )
+        self.assertEqual(
+            self.popup.comparison_fallback_edit.toPlainText(), "비교 번역 중..."
+        )
 
     def test_pin_buttons_only_turn_blue_when_checked(self) -> None:
         style = " ".join(self.popup.styleSheet().split())

@@ -308,14 +308,25 @@ class TranslationPopup(QWidget):
         used_fallback: bool = False,
         reasoning_effort: str = "",
     ) -> None:
-        self._reset_comparison_view()
-        preserve_scroll = self._loading
-        self._loading = False
-        self.copy_button.setEnabled(True)
         display_model = model_name.removeprefix("openrouter/")
         prefix = "폴백 · " if used_fallback else ""
         effort_label = f" · {reasoning_effort}" if reasoning_effort else ""
         display_label = prefix + display_model + effort_label
+        if self._comparison_mode:
+            self._loading = False
+            self.comparison_primary_label.setText(display_label)
+            self.comparison_primary_label.setToolTip(model_name)
+            self._set_comparison_text(
+                self.comparison_primary_edit, text, preserve_scroll=True
+            )
+            if not self._user_resized:
+                self._auto_resize_comparison()
+            return
+
+        self._reset_comparison_view()
+        preserve_scroll = self._loading
+        self._loading = False
+        self.copy_button.setEnabled(True)
         self.model_label.setText(display_label)
         self.model_label.setToolTip(model_name)
         self.text_edit.setProperty("translationModelLabel", display_label)
@@ -338,8 +349,27 @@ class TranslationPopup(QWidget):
     def show_partial_translation(self, text: str) -> None:
         self._loading = True
         self.copy_button.setEnabled(True)
+        if self._comparison_mode:
+            self._set_comparison_text(
+                self.comparison_primary_edit, text, preserve_scroll=True
+            )
+            if not self._user_resized:
+                self._auto_resize_comparison(grow_only=True)
+            return
         self._set_text_and_auto_resize(text, grow_only=True, preserve_scroll=True)
         self._show_popup(reposition=False)
+
+    def show_translation_error(self, message: str, model_name: str) -> None:
+        if not self._comparison_mode:
+            self.show_status("오류", message)
+            return
+        self._loading = False
+        model_display = model_name.removeprefix("openrouter/")
+        self.comparison_primary_label.setText(f"기본 오류 · {model_display}")
+        self.comparison_primary_label.setToolTip(model_name)
+        self._set_comparison_text(
+            self.comparison_primary_edit, message, preserve_scroll=False
+        )
 
     def show_status(self, title: str, message: str) -> None:
         self._reset_comparison_view()
@@ -364,22 +394,29 @@ class TranslationPopup(QWidget):
         QGuiApplication.clipboard().setText(text)
 
     def show_comparison_loading(
-        self, fallback_model: str, reasoning_effort: str = ""
+        self,
+        primary_model: str,
+        primary_reasoning_effort: str,
+        fallback_model: str,
+        fallback_reasoning_effort: str,
     ) -> None:
         self._comparison_mode = True
         self._loading = True
         self.compare_button.setEnabled(False)
         self.model_label.setText("번역 비교")
         self.model_label.setToolTip("")
-        primary_label = self.text_edit.property("translationModelLabel")
+        primary_display = primary_model.removeprefix("openrouter/")
+        primary_effort_label = (
+            f" · {primary_reasoning_effort}" if primary_reasoning_effort else ""
+        )
         self.comparison_primary_label.setText(
-            str(primary_label) if primary_label else "기본 번역"
+            f"{primary_display}{primary_effort_label}"
         )
-        self.comparison_primary_label.setToolTip(
-            str(primary_label) if primary_label else "기본 번역"
-        )
+        self.comparison_primary_label.setToolTip(primary_model)
         fallback_display = fallback_model.removeprefix("openrouter/")
-        effort_label = f" · {reasoning_effort}" if reasoning_effort else ""
+        effort_label = (
+            f" · {fallback_reasoning_effort}" if fallback_reasoning_effort else ""
+        )
         self.comparison_fallback_label.setText(
             f"폴백 · {fallback_display}{effort_label}"
         )
@@ -393,7 +430,9 @@ class TranslationPopup(QWidget):
         self._show_popup(reposition=False)
 
     def show_comparison_partial(self, text: str) -> None:
-        self._set_comparison_fallback_text(text, preserve_scroll=True)
+        self._set_comparison_text(
+            self.comparison_fallback_edit, text, preserve_scroll=True
+        )
         if not self._user_resized:
             self._auto_resize_comparison(grow_only=True)
 
@@ -410,7 +449,9 @@ class TranslationPopup(QWidget):
             f"폴백 · {model_display}{effort_label}"
         )
         self.comparison_fallback_label.setToolTip(model_name)
-        self._set_comparison_fallback_text(text, preserve_scroll=True)
+        self._set_comparison_text(
+            self.comparison_fallback_edit, text, preserve_scroll=True
+        )
         if not self._user_resized:
             self._auto_resize_comparison()
 
@@ -419,7 +460,9 @@ class TranslationPopup(QWidget):
         model_display = model_name.removeprefix("openrouter/")
         self.comparison_fallback_label.setText(f"폴백 오류 · {model_display}")
         self.comparison_fallback_label.setToolTip(model_name)
-        self._set_comparison_fallback_text(message, preserve_scroll=False)
+        self._set_comparison_text(
+            self.comparison_fallback_edit, message, preserve_scroll=False
+        )
 
     def _reset_comparison_view(self) -> None:
         self._comparison_mode = False
@@ -427,13 +470,13 @@ class TranslationPopup(QWidget):
         self.comparison_panel.hide()
         self.text_edit.show()
 
-    def _set_comparison_fallback_text(
-        self, text: str, *, preserve_scroll: bool
+    def _set_comparison_text(
+        self, edit: QTextEdit, text: str, *, preserve_scroll: bool
     ) -> None:
-        scroll_bar = self.comparison_fallback_edit.verticalScrollBar()
+        scroll_bar = edit.verticalScrollBar()
         scroll_value = scroll_bar.value() if preserve_scroll else None
         follow_bottom = preserve_scroll and scroll_value >= scroll_bar.maximum() - 2
-        self.comparison_fallback_edit.setPlainText(text)
+        edit.setPlainText(text)
         if scroll_value is not None:
             target = scroll_bar.maximum() if follow_bottom else scroll_value
             scroll_bar.setValue(min(target, scroll_bar.maximum()))

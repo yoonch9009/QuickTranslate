@@ -18,10 +18,12 @@ class FakePopup:
         self.partial_texts: list[str] = []
         self.translations: list[tuple[str, str, bool, str]] = []
         self.comparison_available = False
-        self.comparison_loading: list[tuple[str, str]] = []
+        self.comparison_loading: list[tuple[str, str, str, str]] = []
         self.comparison_partials: list[str] = []
         self.comparison_results: list[tuple[str, str, str]] = []
         self.comparison_errors: list[tuple[str, str]] = []
+        self.translation_errors: list[tuple[str, str]] = []
+        self.loading_count = 0
 
     def isVisible(self) -> bool:
         return self._visible
@@ -39,8 +41,24 @@ class FakePopup:
     def set_comparison_available(self, available: bool) -> None:
         self.comparison_available = available
 
-    def show_comparison_loading(self, model: str, reasoning_effort: str) -> None:
-        self.comparison_loading.append((model, reasoning_effort))
+    def show_loading(self) -> None:
+        self.loading_count += 1
+
+    def show_comparison_loading(
+        self,
+        primary_model: str,
+        primary_reasoning_effort: str,
+        fallback_model: str,
+        fallback_reasoning_effort: str,
+    ) -> None:
+        self.comparison_loading.append(
+            (
+                primary_model,
+                primary_reasoning_effort,
+                fallback_model,
+                fallback_reasoning_effort,
+            )
+        )
 
     def show_comparison_partial(self, text: str) -> None:
         self.comparison_partials.append(text)
@@ -52,6 +70,9 @@ class FakePopup:
 
     def show_comparison_error(self, message: str, model: str) -> None:
         self.comparison_errors.append((message, model))
+
+    def show_translation_error(self, message: str, model: str) -> None:
+        self.translation_errors.append((message, model))
 
     def show_partial_translation(self, text: str) -> None:
         self.partial_texts.append(text)
@@ -71,6 +92,43 @@ class FakePopup:
 
 
 class AppPopupManagementTests(unittest.TestCase):
+    def test_new_translation_enables_comparison_before_worker_finishes(self) -> None:
+        popup = FakePopup(visible=False, pinned=False)
+        settings = SimpleNamespace(primary_model="primary", fallback_model="fallback")
+        signals = SimpleNamespace(success=Mock(), partial=Mock(), failure=Mock())
+        task = SimpleNamespace(signals=signals)
+        app = SimpleNamespace(
+            settings=settings,
+            popup=popup,
+            _signature_for_source=Mock(return_value="signature"),
+            _last_success_signature="",
+            _last_success_at=0.0,
+            _task_signatures={},
+            _prepare_popup_for_new_translation=Mock(),
+            _popup_sources={},
+            _task_counter=0,
+            _active_tasks={},
+            _task_popups={},
+            _handle_translation_success=Mock(),
+            _handle_translation_partial=Mock(),
+            _handle_translation_failure=Mock(),
+            thread_pool=Mock(),
+        )
+        app._set_comparison_available = lambda target, model: (
+            QuickTranslateApp._set_comparison_available(app, target, model)
+        )
+
+        with (
+            patch("quicktranslate.app.load_cached_translation", return_value=None),
+            patch("quicktranslate.app.TranslationTask", return_value=task),
+        ):
+            QuickTranslateApp._start_translation(app, "원문")
+
+        self.assertEqual(popup.loading_count, 1)
+        self.assertTrue(popup.comparison_available)
+        self.assertEqual(app._popup_sources[popup], ("원문", None))
+        app.thread_pool.start.assert_called_once_with(task)
+
     def test_pinned_popup_is_retained_and_new_translation_gets_new_window(self) -> None:
         pinned = FakePopup(visible=True, pinned=True)
         replacement = FakePopup(visible=False, pinned=False)
@@ -229,7 +287,17 @@ class AppPopupManagementTests(unittest.TestCase):
             settings,
             only_model=fallback_model,
         )
-        self.assertEqual(popup.comparison_loading, [(fallback_model, "none")])
+        self.assertEqual(
+            popup.comparison_loading,
+            [
+                (
+                    settings.primary_model,
+                    "none",
+                    fallback_model,
+                    "none",
+                )
+            ],
+        )
         self.assertIs(app._comparison_task_popups[5], popup)
         app.thread_pool.start.assert_called_once_with(task)
 
@@ -263,6 +331,21 @@ class AppPopupManagementTests(unittest.TestCase):
         self.assertEqual(popup.comparison_errors, [("요청 실패", "fallback")])
         self.assertNotIn(8, app._active_tasks)
         self.assertNotIn(8, app._comparison_task_popups)
+
+    def test_primary_failure_is_routed_without_closing_comparison(self) -> None:
+        popup = FakePopup(visible=True, pinned=False)
+        app = SimpleNamespace(
+            settings=SimpleNamespace(primary_model="primary"),
+            _active_tasks={9: object()},
+            _task_popups={9: popup},
+            _task_signatures={9: "signature"},
+        )
+
+        QuickTranslateApp._handle_translation_failure(app, 9, "기본 요청 실패")
+
+        self.assertEqual(
+            popup.translation_errors, [("기본 요청 실패", "primary")]
+        )
 
     def test_always_pin_toggle_pins_current_and_preserves_older_windows(self) -> None:
         current = FakePopup(visible=True, pinned=False)

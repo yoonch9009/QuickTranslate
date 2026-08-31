@@ -347,6 +347,7 @@ class QuickTranslateApp(QObject):
         self._task_counter += 1
         task_id = self._task_counter
         self.popup.show_loading()
+        self._set_comparison_available(self.popup, self.settings.primary_model)
 
         task = TranslationTask(task_id, source_text, image_data_url, self.settings)
         task.signals.success.connect(self._handle_translation_success)
@@ -406,7 +407,7 @@ class QuickTranslateApp(QObject):
         self._task_signatures.pop(task_id, None)
         if popup is None:
             return
-        popup.show_status("오류", message)
+        popup.show_translation_error(message, self.settings.primary_model)
 
     def _set_comparison_available(
         self, popup: TranslationPopup, model_name: str
@@ -433,6 +434,8 @@ class QuickTranslateApp(QObject):
         task_id = self._task_counter
         source_text, image_data_url = source
         popup.show_comparison_loading(
+            primary_model,
+            self._reasoning_effort_for_display(primary_model),
             fallback_model,
             self._reasoning_effort_for_display(fallback_model),
         )
