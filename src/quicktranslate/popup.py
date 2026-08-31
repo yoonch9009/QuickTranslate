@@ -29,8 +29,8 @@ class TranslationPopup(QWidget):
     _MIN_WIDTH = 320
     _MIN_HEIGHT = 180
     _EDGE_MARGIN = 6
-    _TEXT_CHROME_WIDTH = 72
-    _TEXT_CHROME_HEIGHT = 96
+    _TEXT_CHROME_WIDTH = 54
+    _TEXT_CHROME_HEIGHT = 64
     _LOADING_WIDTH = 220
     _LOADING_HEIGHT = 92
     _GLOBAL_INPUT_POLL_MS = 25
@@ -59,6 +59,7 @@ class TranslationPopup(QWidget):
         self._move_offset = QPoint()
         self._loading = False
         self._pinned = False
+        self._user_resized = False
         self._content_revision = 0
         self._outside_clicks_enabled_at = 0.0
         self._global_esc_down = False
@@ -74,8 +75,8 @@ class TranslationPopup(QWidget):
         self.panel.setAttribute(Qt.WA_StyledBackground, True)
         self.panel.setMouseTracking(True)
         panel_layout = QVBoxLayout(self.panel)
-        panel_layout.setContentsMargins(18, 16, 18, 12)
-        panel_layout.setSpacing(10)
+        panel_layout.setContentsMargins(9, 8, 9, 6)
+        panel_layout.setSpacing(5)
 
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
@@ -190,12 +191,17 @@ class TranslationPopup(QWidget):
         super().hideEvent(event)
 
     def dismiss(self) -> None:
+        self.set_pinned(False)
         self.closed.emit()
         self.hide()
 
     def set_auto_size_limits(self, auto_max_width: int, auto_max_height: int) -> None:
         self._auto_max_width = max(auto_max_width, self._MIN_WIDTH)
         self._auto_max_height = max(auto_max_height, self._MIN_HEIGHT)
+
+    def begin_new_translation(self) -> None:
+        self.set_pinned(False)
+        self._user_resized = False
 
     @property
     def is_pinned(self) -> bool:
@@ -230,7 +236,8 @@ class TranslationPopup(QWidget):
         self.model_label.setText("")
         self._content_revision += 1
         self.text_edit.setPlainText(message)
-        self.resize(self._LOADING_WIDTH, self._LOADING_HEIGHT)
+        if not self._user_resized:
+            self.resize(self._LOADING_WIDTH, self._LOADING_HEIGHT)
         self._arm_outside_click_guard()
         self._show_popup(reposition=not self.isVisible())
 
@@ -256,7 +263,8 @@ class TranslationPopup(QWidget):
         self._content_revision += 1
         revision = self._content_revision
         self.text_edit.setPlainText(text)
-        self._auto_resize_to_content(text, grow_only=grow_only)
+        if not self._user_resized:
+            self._auto_resize_to_content(text, grow_only=grow_only)
         QTimer.singleShot(
             0,
             lambda: self._finish_deferred_auto_resize(revision, grow_only),
@@ -294,6 +302,9 @@ class TranslationPopup(QWidget):
 
     def _finish_deferred_auto_resize(self, revision: int, grow_only: bool) -> None:
         if revision != self._content_revision:
+            return
+        if self._user_resized:
+            self._keep_inside_available_screen()
             return
         document = self.text_edit.document()
         document.setTextWidth(max(1, self.text_edit.viewport().width()))
@@ -382,6 +393,7 @@ class TranslationPopup(QWidget):
         self.action_bar.setCursor(Qt.ClosedHandCursor)
 
     def _start_resize(self, edges: Qt.Edges, global_pos: QPoint) -> None:
+        self._user_resized = True
         handle = self.windowHandle()
         if handle is not None and handle.startSystemResize(edges):
             return
@@ -458,13 +470,13 @@ class TranslationPopup(QWidget):
             #actionBar {
                 background: transparent;
                 border: none;
-                min-height: 28px;
+                min-height: 14px;
             }
             #actionButton {
                 background: transparent;
                 border: none;
                 color: rgba(247, 247, 245, 0.74);
-                padding: 4px 8px;
+                padding: 2px 8px;
                 font-size: 12px;
                 font-weight: 600;
             }
@@ -479,7 +491,7 @@ class TranslationPopup(QWidget):
                 background: transparent;
                 border: none;
                 color: rgba(247, 247, 245, 0.74);
-                padding: 4px 8px;
+                padding: 2px 8px;
                 font-size: 12px;
                 font-weight: 600;
             }

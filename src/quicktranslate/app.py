@@ -101,12 +101,8 @@ class QuickTranslateApp(QObject):
         self.settings = AppSettings.load()
         self.app_icon = self._resolve_icon()
         self.application.setWindowIcon(self.app_icon)
-        self.popup = TranslationPopup(
-            self.settings.popup_auto_max_width,
-            self.settings.popup_auto_max_height,
-        )
-        self.popup.setWindowIcon(self.app_icon)
-        self.popup.closed.connect(self._cancel_active_translation)
+        self._retained_popups: list[TranslationPopup] = []
+        self.popup = self._create_popup()
         self.thread_pool = QThreadPool.globalInstance()
         self.metadata_task = MetadataRefreshTask()
         self.thread_pool.start(self.metadata_task)
@@ -155,6 +151,31 @@ class QuickTranslateApp(QObject):
             icon = self.application.windowIcon()
         return icon
 
+    def _create_popup(self) -> TranslationPopup:
+        popup = TranslationPopup(
+            self.settings.popup_auto_max_width,
+            self.settings.popup_auto_max_height,
+        )
+        popup.setWindowIcon(self.app_icon)
+        popup.closed.connect(
+            lambda retained_popup=popup: self._handle_popup_closed(retained_popup)
+        )
+        return popup
+
+    def _prepare_popup_for_new_translation(self) -> None:
+        if self.popup.isVisible() and self.popup.is_pinned:
+            self._retained_popups.append(self.popup)
+            self.popup = self._create_popup()
+        self.popup.begin_new_translation()
+
+    def _handle_popup_closed(self, popup: TranslationPopup) -> None:
+        if popup is self.popup:
+            self._cancel_active_translation()
+            return
+        if popup in self._retained_popups:
+            self._retained_popups.remove(popup)
+            popup.deleteLater()
+
     def _build_menu(self) -> QMenu:
         menu = QMenu()
 
@@ -189,10 +210,11 @@ class QuickTranslateApp(QObject):
             self.settings.primary_model,
             self.settings.fallback_model,
         )
-        self.popup.set_auto_size_limits(
-            self.settings.popup_auto_max_width,
-            self.settings.popup_auto_max_height,
-        )
+        for popup in [self.popup, *self._retained_popups]:
+            popup.set_auto_size_limits(
+                self.settings.popup_auto_max_width,
+                self.settings.popup_auto_max_height,
+            )
         self.clipboard_poll_timer.setInterval(self.settings.clipboard_settle_poll_ms)
         self.copy_trigger.update_interval(self.settings.trigger_interval_ms)
         self.tray_icon.showMessage(
@@ -207,7 +229,8 @@ class QuickTranslateApp(QObject):
             return
 
         self.pending_clipboard_capture = True
-        if self.popup.isVisible():
+        if self.popup.isVisible() and not self.popup.is_pinned:
+            self.popup.begin_new_translation()
             self.popup.show_loading("클립보드 확인 중...")
         clipboard = QGuiApplication.clipboard()
         self._clipboard_baseline_text = clipboard.text().strip()
@@ -259,6 +282,7 @@ class QuickTranslateApp(QObject):
         signature = self._signature_for_source(source_text, image_data_url)
         cached = load_cached_translation(source_text, self.settings, image_data_url)
         if cached is not None:
+            self._prepare_popup_for_new_translation()
             self._record_success(signature)
             self.popup.show_translation(
                 cached.text,
@@ -274,6 +298,7 @@ class QuickTranslateApp(QObject):
         ):
             return
 
+        self._prepare_popup_for_new_translation()
         self.is_translating = True
         self._pending_signature = signature
         self._task_counter += 1

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QPoint, QSize, Qt
 from PySide6.QtWidgets import QApplication
 
 from quicktranslate.popup import TranslationPopup
@@ -59,6 +59,48 @@ class PopupTests(unittest.TestCase):
         self.application.processEvents()
 
         self.assertEqual(self.popup.text_edit.toPlainText(), "번역 중...")
+
+    def test_manual_resize_is_preserved_when_translation_finishes(self) -> None:
+        self.popup.show_loading()
+        self.popup._start_resize(Qt.RightEdge | Qt.BottomEdge, QPoint())
+        self.popup.resize(580, 420)
+
+        self.popup.show_partial_translation("작성 중")
+        self.popup.show_translation("완성", "model")
+        self.application.processEvents()
+        self.application.processEvents()
+
+        self.assertEqual(self.popup.size(), QSize(580, 420))
+
+    def test_new_translation_reenables_automatic_sizing(self) -> None:
+        self.popup._start_resize(Qt.RightEdge | Qt.BottomEdge, QPoint())
+        self.popup.resize(580, 420)
+        self.popup.show_translation("첫 번째", "model")
+        self.popup.begin_new_translation()
+
+        self.popup.show_translation("짧은 새 번역", "model")
+        self.application.processEvents()
+
+        self.assertLess(self.popup.width(), 580)
+        self.assertLess(self.popup.height(), 420)
+
+    def test_popup_padding_is_reduced_by_half(self) -> None:
+        margins = self.popup.panel.layout().contentsMargins()
+
+        self.assertEqual(
+            (margins.left(), margins.top(), margins.right(), margins.bottom()),
+            (9, 8, 9, 6),
+        )
+        self.assertEqual(self.popup.panel.layout().spacing(), 5)
+
+    def test_new_translation_always_starts_unpinned(self) -> None:
+        self.popup.set_pinned(True)
+
+        self.popup.begin_new_translation()
+
+        self.assertFalse(self.popup.is_pinned)
+        self.assertFalse(self.popup.pin_button.isChecked())
+        self.assertEqual(self.popup.pin_button.text(), "고정")
 
     def test_pin_blocks_outside_click_but_close_controls_still_work(self) -> None:
         self.popup._outside_clicks_enabled_at = monotonic() - 1

@@ -68,7 +68,7 @@ macos.permissions =
 mode = onefile
 
 # specify any extra nuitka arguments
-extra_args = --quiet --noinclude-qt-translations --windows-console-mode=disable --file-description=QuickTranslate --product-name=QuickTranslate --file-version=1.3.0.0 --product-version=1.3.0.0 --assume-yes-for-downloads
+extra_args = --quiet --noinclude-qt-translations --windows-console-mode=disable --file-description=QuickTranslate --product-name=QuickTranslate --file-version=1.4.0.0 --product-version=1.4.0.0 --assume-yes-for-downloads
 
 [buildozer]
 
