@@ -23,6 +23,7 @@ class SettingsTests(unittest.TestCase):
                         "temperature": 1.0,
                     }
                 },
+                always_pin_new_popups=True,
             )
 
             with (
@@ -35,6 +36,7 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(loaded.primary_model, settings.primary_model)
             self.assertEqual(loaded.fallback_model, settings.fallback_model)
             self.assertEqual(loaded.saved_model_profiles, settings.saved_model_profiles)
+            self.assertTrue(loaded.always_pin_new_popups)
 
     def test_legacy_temperature_migrates_to_both_models(self) -> None:
         with TemporaryDirectory() as temporary_directory:

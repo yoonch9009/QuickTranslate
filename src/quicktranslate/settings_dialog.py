@@ -414,6 +414,7 @@ class SettingsDialog(QDialog):
             clipboard_settle_timeout_ms=current.clipboard_settle_timeout_ms,
             popup_auto_max_width=self.popup_width_input.value(),
             popup_auto_max_height=self.popup_height_input.value(),
+            always_pin_new_popups=current.always_pin_new_popups,
         )
 
     def _initialize_reasoning_controls(

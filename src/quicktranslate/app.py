@@ -106,20 +106,20 @@ class QuickTranslateApp(QObject):
         self.settings = AppSettings.load()
         self.app_icon = self._resolve_icon()
         self.application.setWindowIcon(self.app_icon)
+        self._always_pin_new_popups = self.settings.always_pin_new_popups
         self._retained_popups: list[TranslationPopup] = []
         self.popup = self._create_popup()
         self.thread_pool = QThreadPool.globalInstance()
         self.metadata_task = MetadataRefreshTask()
         self.thread_pool.start(self.metadata_task)
-        self.is_translating = False
         self.pending_clipboard_capture = False
         self._clipboard_baseline_text = ""
         self._clipboard_baseline_image_key = 0
         self._clipboard_capture_started_at = 0.0
-        self._pending_signature = ""
-        self._pending_task_id = 0
         self._task_counter = 0
         self._active_tasks: dict[int, TranslationTask] = {}
+        self._task_popups: dict[int, TranslationPopup] = {}
+        self._task_signatures: dict[int, str] = {}
         self._last_success_signature = ""
         self._last_success_at = 0.0
 
@@ -162,6 +162,8 @@ class QuickTranslateApp(QObject):
             self.settings.popup_auto_max_height,
         )
         popup.setWindowIcon(self.app_icon)
+        popup.set_always_pin_mode(self._always_pin_new_popups)
+        popup.always_pin_changed.connect(self._set_always_pin_new_popups)
         popup.closed.connect(
             lambda retained_popup=popup: self._handle_popup_closed(retained_popup)
         )
@@ -171,15 +173,22 @@ class QuickTranslateApp(QObject):
         if self.popup.isVisible() and self.popup.is_pinned:
             self._retained_popups.append(self.popup)
             self.popup = self._create_popup()
-        self.popup.begin_new_translation()
+        self.popup.begin_new_translation(pinned=self._always_pin_new_popups)
 
     def _handle_popup_closed(self, popup: TranslationPopup) -> None:
+        self._cancel_popup_translations(popup)
         if popup is self.popup:
-            self._cancel_active_translation()
             return
         if popup in self._retained_popups:
             self._retained_popups.remove(popup)
             popup.deleteLater()
+
+    def _set_always_pin_new_popups(self, enabled: bool) -> None:
+        self._always_pin_new_popups = enabled
+        self.settings.always_pin_new_popups = enabled
+        self.settings.save()
+        for popup in [self.popup, *self._retained_popups]:
+            popup.set_always_pin_mode(enabled)
 
     def _build_menu(self) -> QMenu:
         menu = QMenu()
@@ -230,7 +239,7 @@ class QuickTranslateApp(QObject):
         )
 
     def _begin_clipboard_capture(self) -> None:
-        if self.is_translating or self.pending_clipboard_capture:
+        if not self._can_begin_clipboard_capture():
             return
 
         self.pending_clipboard_capture = True
@@ -245,6 +254,14 @@ class QuickTranslateApp(QObject):
         )
         self._clipboard_capture_started_at = monotonic()
         self.clipboard_poll_timer.start(self.settings.clipboard_settle_poll_ms)
+
+    def _can_begin_clipboard_capture(self) -> bool:
+        if self.pending_clipboard_capture:
+            return False
+        current_is_translating = any(
+            popup is self.popup for popup in self._task_popups.values()
+        )
+        return not current_is_translating or self.popup.is_pinned
 
     def _poll_clipboard_capture(self) -> None:
         if not self.pending_clipboard_capture:
@@ -303,13 +320,12 @@ class QuickTranslateApp(QObject):
             and now - self._last_success_at <= DUPLICATE_TRANSLATION_WINDOW_SECONDS
         ):
             return
+        if signature in self._task_signatures.values():
+            return
 
         self._prepare_popup_for_new_translation()
-        self.is_translating = True
-        self._pending_signature = signature
         self._task_counter += 1
         task_id = self._task_counter
-        self._pending_task_id = task_id
         self.popup.show_loading()
 
         task = TranslationTask(task_id, source_text, image_data_url, self.settings)
@@ -317,14 +333,19 @@ class QuickTranslateApp(QObject):
         task.signals.partial.connect(self._handle_translation_partial)
         task.signals.failure.connect(self._handle_translation_failure)
         self._active_tasks[task_id] = task
+        self._task_popups[task_id] = self.popup
+        self._task_signatures[task_id] = signature
         self.thread_pool.start(task)
 
-    def _cancel_active_translation(self) -> None:
-        if not self.is_translating:
-            return
-        self.is_translating = False
-        self._pending_signature = ""
-        self._pending_task_id = 0
+    def _cancel_popup_translations(self, popup: TranslationPopup) -> None:
+        task_ids = [
+            task_id
+            for task_id, task_popup in self._task_popups.items()
+            if task_popup is popup
+        ]
+        for task_id in task_ids:
+            self._task_popups.pop(task_id, None)
+            self._task_signatures.pop(task_id, None)
 
     def _handle_translation_success(
         self,
@@ -333,13 +354,12 @@ class QuickTranslateApp(QObject):
         model_name: str,
     ) -> None:
         self._active_tasks.pop(task_id, None)
-        if task_id != self._pending_task_id:
+        popup = self._task_popups.pop(task_id, None)
+        signature = self._task_signatures.pop(task_id, "")
+        if popup is None:
             return
-        self.is_translating = False
-        self._record_success(self._pending_signature)
-        self._pending_signature = ""
-        self._pending_task_id = 0
-        self.popup.show_translation(
+        self._record_success(signature)
+        popup.show_translation(
             translated_text,
             model_name,
             used_fallback=model_name != self.settings.primary_model,
@@ -347,18 +367,18 @@ class QuickTranslateApp(QObject):
         )
 
     def _handle_translation_partial(self, task_id: int, translated_text: str) -> None:
-        if task_id != self._pending_task_id or not self.is_translating:
+        popup = self._task_popups.get(task_id)
+        if popup is None:
             return
-        self.popup.show_partial_translation(translated_text)
+        popup.show_partial_translation(translated_text)
 
     def _handle_translation_failure(self, task_id: int, message: str) -> None:
         self._active_tasks.pop(task_id, None)
-        if task_id != self._pending_task_id:
+        popup = self._task_popups.pop(task_id, None)
+        self._task_signatures.pop(task_id, None)
+        if popup is None:
             return
-        self.is_translating = False
-        self._pending_signature = ""
-        self._pending_task_id = 0
-        self._show_error(message)
+        popup.show_status("오류", message)
 
     def _show_error(self, message: str) -> None:
         self.popup.show_status("오류", message)

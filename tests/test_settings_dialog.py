@@ -22,7 +22,7 @@ class SettingsDialogTests(unittest.TestCase):
         cls.application = QApplication.instance() or QApplication([])
 
     def test_edited_model_text_wins_over_stale_combo_item_data(self) -> None:
-        current = AppSettings()
+        current = AppSettings(always_pin_new_popups=True)
         dialog = SettingsDialog(current)
         primary = "openrouter/z-ai/glm-5.3-flash"
         fallback = "openrouter/z-ai/glm-5.3"
@@ -47,6 +47,7 @@ class SettingsDialogTests(unittest.TestCase):
         self.assertEqual(saved.primary_top_p, 0.95)
         self.assertEqual(saved.fallback_temperature, 0.4)
         self.assertEqual(saved.fallback_top_p, 0.8)
+        self.assertTrue(saved.always_pin_new_popups)
         dialog.deleteLater()
 
     def test_swap_moves_model_and_all_parameters_together(self) -> None:

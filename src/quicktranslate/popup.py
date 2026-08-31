@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 
 class TranslationPopup(QWidget):
     closed = Signal()
+    always_pin_changed = Signal(bool)
     _MIN_WIDTH = 320
     _MIN_HEIGHT = 180
     _EDGE_MARGIN = 6
@@ -100,11 +101,18 @@ class TranslationPopup(QWidget):
         self.pin_button = QPushButton("고정")
         self.pin_button.setCheckable(True)
         self.pin_button.setToolTip("다른 곳을 클릭해도 번역창을 유지합니다.")
+        self.always_pin_button = QPushButton("상시 고정")
+        self.always_pin_button.setCheckable(True)
+        self.always_pin_button.setToolTip(
+            "이후 새 번역창을 항상 고정된 상태로 엽니다."
+        )
         self.copy_button = QPushButton("복사")
         self.close_button = QPushButton("닫기")
+        self.always_pin_button.setObjectName("alwaysPinButton")
         self.pin_button.setObjectName("pinButton")
         self.copy_button.setObjectName("actionButton")
         self.close_button.setObjectName("actionButton")
+        action_layout.addWidget(self.always_pin_button)
         action_layout.addWidget(self.pin_button)
         action_layout.addWidget(self.copy_button)
         action_layout.addWidget(self.close_button)
@@ -113,6 +121,7 @@ class TranslationPopup(QWidget):
         panel_layout.addWidget(self.text_edit)
         outer.addWidget(self.panel)
 
+        self.always_pin_button.toggled.connect(self.always_pin_changed.emit)
         self.pin_button.toggled.connect(self.set_pinned)
         self.copy_button.clicked.connect(self.copy_text)
         self.close_button.clicked.connect(self.dismiss)
@@ -199,8 +208,8 @@ class TranslationPopup(QWidget):
         self._auto_max_width = max(auto_max_width, self._MIN_WIDTH)
         self._auto_max_height = max(auto_max_height, self._MIN_HEIGHT)
 
-    def begin_new_translation(self) -> None:
-        self.set_pinned(False)
+    def begin_new_translation(self, *, pinned: bool = False) -> None:
+        self.set_pinned(pinned)
         self._user_resized = False
 
     @property
@@ -212,6 +221,12 @@ class TranslationPopup(QWidget):
         self.pin_button.setText("고정됨" if pinned else "고정")
         if self.pin_button.isChecked() != pinned:
             self.pin_button.setChecked(pinned)
+
+    def set_always_pin_mode(self, enabled: bool) -> None:
+        previous = self.always_pin_button.blockSignals(True)
+        self.always_pin_button.setChecked(enabled)
+        self.always_pin_button.setText("상시 고정됨" if enabled else "상시 고정")
+        self.always_pin_button.blockSignals(previous)
 
     def show_translation(
         self,
@@ -294,10 +309,19 @@ class TranslationPopup(QWidget):
         longest_line_width = max(
             (metrics.horizontalAdvance(line) for line in lines), default=0
         )
+        panel_margins = self.panel.layout().contentsMargins()
+        action_bar_width = (
+            self.action_bar.sizeHint().width()
+            + panel_margins.left()
+            + panel_margins.right()
+        )
 
         target_width = max(
             self._MIN_WIDTH,
-            min(longest_line_width + self._TEXT_CHROME_WIDTH, self._auto_max_width),
+            min(
+                max(longest_line_width + self._TEXT_CHROME_WIDTH, action_bar_width),
+                self._auto_max_width,
+            ),
         )
 
         doc = QTextDocument(self)
@@ -525,7 +549,7 @@ class TranslationPopup(QWidget):
                 color: rgba(247, 247, 245, 0.52);
                 font-size: 11px;
             }
-            #pinButton {
+            #pinButton, #alwaysPinButton {
                 background: transparent;
                 border: none;
                 color: rgba(247, 247, 245, 0.74);
@@ -534,7 +558,8 @@ class TranslationPopup(QWidget):
                 font-size: 12px;
                 font-weight: 600;
             }
-            #pinButton:hover, #pinButton:checked {
+            #pinButton:hover, #pinButton:checked,
+            #alwaysPinButton:hover, #alwaysPinButton:checked {
                 color: #8fc7ff;
             }
             """

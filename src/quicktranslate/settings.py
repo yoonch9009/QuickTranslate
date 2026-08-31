@@ -49,6 +49,7 @@ class AppSettings:
     clipboard_settle_timeout_ms: int = 80
     popup_auto_max_width: int = 620
     popup_auto_max_height: int = 520
+    always_pin_new_popups: bool = False
 
     @classmethod
     def load(cls) -> AppSettings:

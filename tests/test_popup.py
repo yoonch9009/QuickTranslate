@@ -154,6 +154,7 @@ class PopupTests(unittest.TestCase):
         self.application.processEvents()
 
         for button in (
+            self.popup.always_pin_button,
             self.popup.pin_button,
             self.popup.copy_button,
             self.popup.close_button,
@@ -168,6 +169,45 @@ class PopupTests(unittest.TestCase):
         self.assertFalse(self.popup.is_pinned)
         self.assertFalse(self.popup.pin_button.isChecked())
         self.assertEqual(self.popup.pin_button.text(), "고정")
+
+    def test_always_pin_mode_can_make_new_translation_start_pinned(self) -> None:
+        self.popup.set_pinned(False)
+
+        self.popup.begin_new_translation(pinned=True)
+
+        self.assertTrue(self.popup.is_pinned)
+        self.assertTrue(self.popup.pin_button.isChecked())
+
+    def test_always_pin_control_is_left_of_manual_pin_and_emits_user_changes(
+        self,
+    ) -> None:
+        changes: list[bool] = []
+        self.popup.always_pin_changed.connect(changes.append)
+        self.popup.show_translation("번역", "model")
+        self.application.processEvents()
+
+        self.popup.always_pin_button.click()
+
+        self.assertEqual(changes, [True])
+        self.assertLess(
+            self.popup.always_pin_button.geometry().left(),
+            self.popup.pin_button.geometry().left(),
+        )
+        self.assertFalse(self.popup.is_pinned)
+
+    def test_popup_grows_wide_enough_for_model_and_all_header_buttons(self) -> None:
+        self.popup.set_always_pin_mode(True)
+        self.popup.show_translation(
+            "짧음",
+            "qwen/qwen3.8-flash",
+            reasoning_effort="low",
+        )
+        self.application.processEvents()
+
+        self.assertGreaterEqual(
+            self.popup.model_label.width(),
+            self.popup.model_label.sizeHint().width(),
+        )
 
     def test_pin_blocks_outside_click_but_close_controls_still_work(self) -> None:
         self.popup._outside_clicks_enabled_at = monotonic() - 1
