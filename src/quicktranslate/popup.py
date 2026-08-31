@@ -101,7 +101,7 @@ class TranslationPopup(QWidget):
         self.pin_button = QPushButton("고정")
         self.pin_button.setCheckable(True)
         self.pin_button.setToolTip("다른 곳을 클릭해도 번역창을 유지합니다.")
-        self.always_pin_button = QPushButton("상시 고정")
+        self.always_pin_button = QPushButton("상시")
         self.always_pin_button.setCheckable(True)
         self.always_pin_button.setToolTip(
             "이후 새 번역창을 항상 고정된 상태로 엽니다."
@@ -225,7 +225,7 @@ class TranslationPopup(QWidget):
     def set_always_pin_mode(self, enabled: bool) -> None:
         previous = self.always_pin_button.blockSignals(True)
         self.always_pin_button.setChecked(enabled)
-        self.always_pin_button.setText("상시 고정됨" if enabled else "상시 고정")
+        self.always_pin_button.setText("상시")
         self.always_pin_button.blockSignals(previous)
 
     def show_translation(

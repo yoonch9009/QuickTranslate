@@ -187,8 +187,10 @@ class PopupTests(unittest.TestCase):
         self.application.processEvents()
 
         self.popup.always_pin_button.click()
+        self.popup.set_always_pin_mode(True)
 
         self.assertEqual(changes, [True])
+        self.assertEqual(self.popup.always_pin_button.text(), "상시")
         self.assertLess(
             self.popup.always_pin_button.geometry().left(),
             self.popup.pin_button.geometry().left(),
