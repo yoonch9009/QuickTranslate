@@ -161,6 +161,19 @@ class PopupTests(unittest.TestCase):
         ):
             self.assertGreaterEqual(button.height(), 24)
 
+    def test_pin_buttons_only_turn_blue_when_checked(self) -> None:
+        style = " ".join(self.popup.styleSheet().split())
+
+        self.assertIn(
+            "#pinButton:hover, #alwaysPinButton:hover "
+            "{ color: rgba(255, 255, 255, 0.98); }",
+            style,
+        )
+        self.assertIn(
+            "#pinButton:checked, #alwaysPinButton:checked { color: #8fc7ff; }",
+            style,
+        )
+
     def test_new_translation_always_starts_unpinned(self) -> None:
         self.popup.set_pinned(True)
 

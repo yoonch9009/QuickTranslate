@@ -1,6 +1,6 @@
 [project]
 name = "quicktranslate"
-version = "1.5.1"
+version = "1.5.2"
 description = "Lightweight Windows tray translator using OpenRouter"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"

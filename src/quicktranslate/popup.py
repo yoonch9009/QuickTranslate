@@ -558,8 +558,10 @@ class TranslationPopup(QWidget):
                 font-size: 12px;
                 font-weight: 600;
             }
-            #pinButton:hover, #pinButton:checked,
-            #alwaysPinButton:hover, #alwaysPinButton:checked {
+            #pinButton:hover, #alwaysPinButton:hover {
+                color: rgba(255, 255, 255, 0.98);
+            }
+            #pinButton:checked, #alwaysPinButton:checked {
                 color: #8fc7ff;
             }
             """
