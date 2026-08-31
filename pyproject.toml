@@ -1,7 +1,7 @@
 [project]
 name = "quicktranslate"
-version = "1.6.1"
-description = "Lightweight Windows tray translator using OpenRouter"
+version = "1.7.0"
+description = "Lightweight Windows tray translator using OpenRouter, DeepSeek, and Codex"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 dependencies = [
@@ -28,6 +28,7 @@ files = [
     "QuickTranslate.pyw",
     "src/quicktranslate/__init__.py",
     "src/quicktranslate/app.py",
+    "src/quicktranslate/codex_client.py",
     "src/quicktranslate/hotkey.py",
     "src/quicktranslate/image_input.py",
     "src/quicktranslate/model_catalog.py",

@@ -141,6 +141,7 @@ LANGUAGE_OPTIONS: list[tuple[str, str]] = [
 ]
 
 MODEL_OPTIONS: list[tuple[str, str]] = [
+    ("codex/gpt-5.6-luna", "codex/gpt-5.6-luna"),
     ("qwen/qwen3.8-flash", "qwen/qwen3.8-flash"),
     ("openrouter/z-ai/glm-5.3-flash", "openrouter/z-ai/glm-5.3-flash"),
     (
@@ -171,6 +172,6 @@ _LEGACY_MODEL_ALIASES: dict[str, str] = {
 
 def migrate_model_name(model: str) -> str:
     name = model.strip()
-    if name.startswith(("deepseek/", "openrouter/")):
+    if name.startswith(("codex/", "deepseek/", "openrouter/")):
         return name
     return _LEGACY_MODEL_ALIASES.get(name, name)

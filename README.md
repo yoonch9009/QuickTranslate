@@ -18,6 +18,7 @@ Windows 백그라운드에서 실행되며, 클립보드의 텍스트나 이미�
 - 클립보드 텍스트 자동 번역
 - OpenRouter `responses` API 스트리밍 사용
 - OpenRouter와 DeepSeek의 이미지 번역 지원
+- Codex의 ChatGPT 요금제로 `gpt-5.6-luna` 텍스트·이미지 번역 지원
 - OpenRouter 모델 메타데이터에 따른 reasoning 자동 설정
 - reasoning 수동 선택 및 사용자 지정 JSON 지원
 - 모델·모드별 권장 파라미터 자동 적용 및 OpenRouter 지원 파라미터 필터링
@@ -75,10 +76,13 @@ python -m quicktranslate.app
 pythonw .\QuickTranslate.pyw
 ```
 
-처음 실행하면 설정 창이 열리며 사용할 공급자의 API Key를 입력해야 합니다.
+처음 실행하면 설정 창이 열립니다. OpenRouter와 DeepSeek 직접 호출은 해당 API Key가
+필요하지만, `codex/` 모델은 설치된 Codex의 ChatGPT 로그인 상태를 사용합니다.
 모델 입력칸은 직접 수정할 수 있고, 기본 목록도 실제 모델 ID 그대로 표시됩니다.
 OpenRouter 모델은 `openrouter/<모델 ID>`, DeepSeek 직접 호출 모델은
-`deepseek/<모델 ID>` 형식으로 입력합니다. 예: `openrouter/z-ai/glm-5.3-flash`.
+`deepseek/<모델 ID>`, Codex 요금제 모델은 `codex/<모델 ID>` 형식으로 입력합니다.
+예: `codex/gpt-5.6-luna`. Codex Luna의 자동 reasoning은 `max`이며,
+temperature와 top_p는 Codex app-server 요청에 보내지 않습니다.
 `자동(속도·가격 우선)`은 OpenRouter 모델 메타데이터를 조회하여 reasoning을 끌 수 있으면 명시적으로 끄고, 필수 모델이면 지원되는 가장 낮은 effort를 보냅니다. 필요하면 모델별 effort 또는 reasoning JSON을 직접 지정할 수 있습니다.
 
 파라미터 모드가 `자동(모델 권장값)`이면 알려진 모델과 thinking 모드에 맞는 권장값을 사용하고, OpenRouter가 지원한다고 알린 파라미터만 전송합니다. 예를 들어 Qwen3.8 Flash 비사고 모드에는 `temperature=0.7`, `top_p=0.8`, `top_k=20`, `presence_penalty=1.5`를 적용합니다. 지원 여부를 확인할 수 없는 선택 파라미터는 추측해서 보내지 않습니다.

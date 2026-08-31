@@ -11,6 +11,7 @@ from time import monotonic
 
 import requests
 
+from .codex_client import CodexProviderError, request_codex_translation
 from .model_catalog import MODEL_CATALOG, EffectiveReasoning
 from .model_profiles import recommended_parameters_for
 from .settings import PARAMETER_MODE_AUTO, REASONING_MODE_AUTO, AppSettings
@@ -20,6 +21,7 @@ OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 PROVIDER_OPENROUTER = "openrouter"
 PROVIDER_DEEPSEEK = "deepseek"
+PROVIDER_CODEX = "codex"
 CONNECT_TIMEOUT_SECONDS = 3.0
 SESSION = requests.Session()
 LOGGER = logging.getLogger(__name__)
@@ -111,6 +113,8 @@ def split_model(model: str) -> tuple[str, str]:
         return PROVIDER_DEEPSEEK, rest
     if slash and prefix_lower == PROVIDER_OPENROUTER:
         return PROVIDER_OPENROUTER, rest
+    if slash and prefix_lower == PROVIDER_CODEX:
+        return PROVIDER_CODEX, rest
     return PROVIDER_OPENROUTER, name
 
 
@@ -123,7 +127,11 @@ def model_id_for_request(model: str) -> str:
 
 
 def provider_label(provider: str) -> str:
-    return "DeepSeek" if provider == PROVIDER_DEEPSEEK else "OpenRouter"
+    if provider == PROVIDER_DEEPSEEK:
+        return "DeepSeek"
+    if provider == PROVIDER_CODEX:
+        return "Codex 구독"
+    return "OpenRouter"
 
 
 def endpoint_for_provider(provider: str, *, image_request: bool = False) -> str:
@@ -183,6 +191,8 @@ def effective_reasoning_for_request(
         return EffectiveReasoning(config, summary, True)
 
     provider, _ = split_model(model)
+    if provider == PROVIDER_CODEX:
+        return EffectiveReasoning({"effort": "max"}, "자동 → max", True)
     if provider == PROVIDER_DEEPSEEK:
         return EffectiveReasoning({"effort": "none"}, "자동 → thinking 끄기", True)
 
@@ -217,6 +227,14 @@ def effective_parameters_for_request(
         label = "수동 파라미터"
 
     provider = provider_for_model(model)
+    if provider == PROVIDER_CODEX:
+        omitted = frozenset(requested)
+        return EffectiveParameters(
+            {},
+            omitted,
+            "Codex 구독 → reasoning만 적용",
+            True,
+        )
     if provider == PROVIDER_DEEPSEEK:
         supported = _DIRECT_DEEPSEEK_PARAMETERS
         metadata_known = True
@@ -246,6 +264,7 @@ def effective_parameters_for_request(
 _OUTPUT_TOKEN_CEILING = {
     PROVIDER_OPENROUTER: 16_384,
     PROVIDER_DEEPSEEK: 65_536,
+    PROVIDER_CODEX: 128_000,
 }
 _OUTPUT_TOKEN_FLOOR = 2_048
 
@@ -778,8 +797,10 @@ def request_translation(
     for index, model in enumerate(models):
         provider = provider_for_model(model)
         label = provider_label(provider)
-        api_key = api_key_for_provider(provider, settings)
-        if not api_key:
+        api_key = "" if provider == PROVIDER_CODEX else api_key_for_provider(
+            provider, settings
+        )
+        if provider != PROVIDER_CODEX and not api_key:
             failure = RequestFailure(
                 user_message=f"{label} API Key가 설정되지 않았습니다.",
                 log_message=f"{model} missing {label} API key",
@@ -791,8 +812,6 @@ def request_translation(
                 continue
             break
 
-        headers = build_headers(api_key, app_name, provider)
-        payload = prepare_request(source_text, settings, model, image_data_url)
         effective = effective_reasoning_for_request(model, settings)
         parameters = effective_parameters_for_request(model, settings)
         LOGGER.info(
@@ -806,33 +825,67 @@ def request_translation(
         )
 
         try:
-            if (
-                provider == PROVIDER_OPENROUTER
-                and on_delta is not None
-                and not image_data_url
-            ):
-                response_data = send_streaming_request(
-                    payload,
-                    headers,
-                    settings,
-                    on_delta,
-                    url=endpoint_for_provider(provider),
-                    label=label,
-                    read_timeout=read_timeout,
-                )
+            if provider == PROVIDER_CODEX:
+                effort = str((effective.config or {}).get("effort") or "max")
+                codex_timeout = read_timeout
+                if effort == "max":
+                    codex_timeout = max(codex_timeout, 180.0)
+                elif effort == "xhigh":
+                    codex_timeout = max(codex_timeout, 120.0)
+                else:
+                    codex_timeout = max(codex_timeout, 60.0)
+                try:
+                    translated_text = request_codex_translation(
+                        source_text,
+                        image_data_url=image_data_url,
+                        model=model_id_for_request(model),
+                        effort=effort,
+                        instructions=(
+                            build_image_request_text(settings.target_language_code)
+                            if image_data_url
+                            else build_instructions(settings.target_language_code)
+                        ),
+                        timeout=codex_timeout,
+                        on_delta=on_delta,
+                    )
+                except CodexProviderError as exc:
+                    raise RuntimeError(
+                        RequestFailure(
+                            user_message=exc.user_message,
+                            log_message=exc.detail,
+                            retryable=exc.retryable,
+                        )
+                    ) from exc
             else:
-                response_data = send_request(
-                    payload,
-                    headers,
-                    settings,
-                    url=endpoint_for_provider(
-                        provider,
-                        image_request=image_data_url is not None,
-                    ),
-                    label=label,
-                    read_timeout=read_timeout,
-                )
-            translated_text = extract_output_text_for(provider, response_data)
+                headers = build_headers(api_key, app_name, provider)
+                payload = prepare_request(source_text, settings, model, image_data_url)
+                if (
+                    provider == PROVIDER_OPENROUTER
+                    and on_delta is not None
+                    and not image_data_url
+                ):
+                    response_data = send_streaming_request(
+                        payload,
+                        headers,
+                        settings,
+                        on_delta,
+                        url=endpoint_for_provider(provider),
+                        label=label,
+                        read_timeout=read_timeout,
+                    )
+                else:
+                    response_data = send_request(
+                        payload,
+                        headers,
+                        settings,
+                        url=endpoint_for_provider(
+                            provider,
+                            image_request=image_data_url is not None,
+                        ),
+                        label=label,
+                        read_timeout=read_timeout,
+                    )
+                translated_text = extract_output_text_for(provider, response_data)
             if not translated_text:
                 failure = RequestFailure(
                     user_message="번역 응답이 비어 있습니다.",

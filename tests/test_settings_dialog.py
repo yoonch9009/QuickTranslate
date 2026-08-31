@@ -139,6 +139,16 @@ class SettingsDialogTests(unittest.TestCase):
         )
         dialog.deleteLater()
 
+    def test_codex_subscription_shows_max_and_disables_sampling_controls(self) -> None:
+        dialog = SettingsDialog(AppSettings(primary_model="codex/gpt-5.6-luna"))
+
+        self.assertEqual(dialog.primary_reasoning_status.text(), "자동 → max")
+        self.assertFalse(dialog.primary_parameter_mode_combo.isEnabled())
+        self.assertFalse(dialog.primary_temperature_input.isEnabled())
+        self.assertFalse(dialog.primary_top_p_input.isEnabled())
+        self.assertIn("reasoning만 적용", dialog.primary_parameter_status.text())
+        dialog.deleteLater()
+
 
 if __name__ == "__main__":
     unittest.main()

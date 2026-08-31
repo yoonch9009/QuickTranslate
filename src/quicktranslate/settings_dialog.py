@@ -244,6 +244,11 @@ class SettingsDialog(QDialog):
 
         form.addRow("OpenRouter API Key", self.api_key_input)
         form.addRow("DeepSeek API Key", self.deepseek_api_key_input)
+        codex_note = QLabel(
+            "codex/ 모델은 설치된 Codex의 ChatGPT 로그인을 사용하며 API Key가 필요 없습니다."
+        )
+        codex_note.setWordWrap(True)
+        form.addRow("Codex 요금제", codex_note)
         form.addRow("대상 언어", self.target_language_combo)
         form.addRow("기본 모델", self.primary_model_combo)
         form.addRow("기본 reasoning", self.primary_reasoning_combo)
@@ -484,6 +489,17 @@ class SettingsDialog(QDialog):
         top_p_input = getattr(self, f"{slot}_top_p_input")
         extra_input = getattr(self, f"{slot}_extra_parameters_input")
         status = getattr(self, f"{slot}_parameter_status")
+        model_combo = getattr(self, f"{slot}_model_combo")
+        model = model_combo.currentText().strip()
+        if model.lower().startswith("codex/"):
+            mode_combo.setEnabled(False)
+            temperature_input.setEnabled(False)
+            top_p_input.setEnabled(False)
+            extra_input.setEnabled(False)
+            status.setText("Codex 구독 → temperature/top_p 미전송, reasoning만 적용")
+            return
+
+        mode_combo.setEnabled(True)
         manual = mode_combo.currentData() == PARAMETER_MODE_MANUAL
         temperature_input.setEnabled(manual)
         top_p_input.setEnabled(manual)
@@ -492,7 +508,6 @@ class SettingsDialog(QDialog):
             status.setText("수동 → 모델 지원 목록에 있는 항목만 전송")
             return
 
-        model_combo = getattr(self, f"{slot}_model_combo")
         reasoning_combo = getattr(self, f"{slot}_reasoning_combo")
         reasoning_input = getattr(self, f"{slot}_reasoning_input")
         try:
@@ -646,6 +661,9 @@ class SettingsDialog(QDialog):
             return
 
         model = model_combo.currentText().strip()
+        if model.lower().startswith("codex/"):
+            status.setText("자동 → max")
+            return
         if model.lower().startswith("deepseek/"):
             status.setText("자동 → thinking 끄기")
             return

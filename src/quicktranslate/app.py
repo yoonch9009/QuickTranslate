@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__, resources_rc  # noqa: F401
+from .codex_client import shutdown_codex_client
 from .hotkey import GlobalCopyTrigger
 from .image_input import encode_image_data_url
 from .model_catalog import MODEL_CATALOG
@@ -533,6 +534,7 @@ class QuickTranslateApp(QObject):
         self.pending_clipboard_capture = False
         self.clipboard_poll_timer.stop()
         self.copy_trigger.stop()
+        shutdown_codex_client()
         self.tray_icon.hide()
         self.application.quit()
 

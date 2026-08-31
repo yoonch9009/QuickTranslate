@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from quicktranslate.codex_client import CodexProviderError
 from quicktranslate.model_catalog import EffectiveReasoning, ParameterSupport
 from quicktranslate.settings import (
     PARAMETER_MODE_MANUAL,
@@ -13,6 +14,8 @@ from quicktranslate.translator import (
     RequestFailure,
     TranslationError,
     TranslationResult,
+    effective_parameters_for_request,
+    effective_reasoning_for_request,
     estimate_max_output_tokens,
     extract_output_text,
     load_cached_translation,
@@ -158,6 +161,20 @@ class TranslatorTests(unittest.TestCase):
             split_model("deepseek/deepseek-v4-flash"),
             ("deepseek", "deepseek-v4-flash"),
         )
+        self.assertEqual(
+            split_model("codex/gpt-5.6-luna"),
+            ("codex", "gpt-5.6-luna"),
+        )
+
+    def test_codex_subscription_defaults_to_max_without_sampling_parameters(self) -> None:
+        settings = AppSettings(primary_model="codex/gpt-5.6-luna")
+
+        reasoning = effective_reasoning_for_request(settings.primary_model, settings)
+        parameters = effective_parameters_for_request(settings.primary_model, settings)
+
+        self.assertEqual(reasoning.config, {"effort": "max"})
+        self.assertEqual(parameters.values, {})
+        self.assertIn("reasoning", parameters.summary)
 
     def test_extract_output_text_uses_output_text_then_message_content(self) -> None:
         direct = extract_output_text({"output_text": "translated"})
@@ -391,6 +408,57 @@ class TranslatorTests(unittest.TestCase):
             )
 
         self.assertEqual(send.call_count, 1)
+
+    def test_codex_subscription_translation_needs_no_api_key(self) -> None:
+        settings = AppSettings(
+            api_key="",
+            primary_model="codex/gpt-5.6-luna",
+            fallback_model="",
+        )
+        with patch(
+            "quicktranslate.translator.request_codex_translation",
+            return_value="안녕하세요",
+        ) as codex:
+            result = request_translation("hello-codex-unique", settings)
+
+        self.assertEqual(result.text, "안녕하세요")
+        self.assertEqual(result.model, "codex/gpt-5.6-luna")
+        self.assertEqual(codex.call_args.kwargs["model"], "gpt-5.6-luna")
+        self.assertEqual(codex.call_args.kwargs["effort"], "max")
+
+    def test_codex_usage_limit_falls_back_without_retrying_codex(self) -> None:
+        settings = AppSettings(
+            api_key="test-key",
+            primary_model="codex/gpt-5.6-luna",
+            fallback_model="openrouter/z-ai/glm-5.3-flash",
+        )
+        support = ParameterSupport(frozenset(), True)
+        with (
+            patch(
+                "quicktranslate.translator.request_codex_translation",
+                side_effect=CodexProviderError(
+                    "한도 초과", "UsageLimitExceeded", retryable=True
+                ),
+            ) as codex,
+            patch("quicktranslate.translator.MODEL_CATALOG.ensure_model"),
+            patch(
+                "quicktranslate.translator.MODEL_CATALOG.reasoning_for",
+                return_value=EffectiveReasoning({"effort": "low"}, "low", True),
+            ),
+            patch(
+                "quicktranslate.translator.MODEL_CATALOG.supported_parameters_for",
+                return_value=support,
+            ),
+            patch(
+                "quicktranslate.translator.send_request",
+                return_value={"output_text": "폴백 번역"},
+            ) as fallback,
+        ):
+            result = request_translation("codex-fallback-unique", settings)
+
+        self.assertEqual(result.model, settings.fallback_model)
+        self.assertEqual(codex.call_count, 1)
+        self.assertEqual(fallback.call_count, 1)
 
     def test_responses_stream_collects_and_emits_only_text_deltas(self) -> None:
         emitted: list[str] = []
