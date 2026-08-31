@@ -219,14 +219,17 @@ class TranslationPopup(QWidget):
         model_name: str,
         *,
         used_fallback: bool = False,
+        reasoning_effort: str = "",
     ) -> None:
+        preserve_scroll = self._loading
         self._loading = False
         self.copy_button.setEnabled(True)
         display_model = model_name.removeprefix("openrouter/")
         prefix = "폴백 · " if used_fallback else ""
-        self.model_label.setText(prefix + display_model)
+        effort_label = f" · {reasoning_effort}" if reasoning_effort else ""
+        self.model_label.setText(prefix + display_model + effort_label)
         self.model_label.setToolTip(model_name)
-        self._set_text_and_auto_resize(text)
+        self._set_text_and_auto_resize(text, preserve_scroll=preserve_scroll)
         self._arm_outside_click_guard()
         self._show_popup(reposition=not self.isVisible())
 
@@ -244,7 +247,7 @@ class TranslationPopup(QWidget):
     def show_partial_translation(self, text: str) -> None:
         self._loading = True
         self.copy_button.setEnabled(False)
-        self._set_text_and_auto_resize(text, grow_only=True)
+        self._set_text_and_auto_resize(text, grow_only=True, preserve_scroll=True)
         self._show_popup(reposition=False)
 
     def show_status(self, title: str, message: str) -> None:
@@ -259,15 +262,30 @@ class TranslationPopup(QWidget):
     def copy_text(self) -> None:
         QGuiApplication.clipboard().setText(self.text_edit.toPlainText())
 
-    def _set_text_and_auto_resize(self, text: str, *, grow_only: bool = False) -> None:
+    def _set_text_and_auto_resize(
+        self,
+        text: str,
+        *,
+        grow_only: bool = False,
+        preserve_scroll: bool = False,
+    ) -> None:
         self._content_revision += 1
         revision = self._content_revision
+        scroll_bar = self.text_edit.verticalScrollBar()
+        scroll_value = scroll_bar.value() if preserve_scroll else None
+        follow_bottom = preserve_scroll and scroll_value >= scroll_bar.maximum() - 2
         self.text_edit.setPlainText(text)
         if not self._user_resized:
             self._auto_resize_to_content(text, grow_only=grow_only)
+        self._restore_scroll_position(scroll_value, follow_bottom)
         QTimer.singleShot(
             0,
-            lambda: self._finish_deferred_auto_resize(revision, grow_only),
+            lambda: self._finish_deferred_auto_resize(
+                revision,
+                grow_only,
+                scroll_value,
+                follow_bottom,
+            ),
         )
 
     def _auto_resize_to_content(self, text: str, *, grow_only: bool = False) -> None:
@@ -300,11 +318,18 @@ class TranslationPopup(QWidget):
         self.resize(target_size)
         self._keep_inside_available_screen()
 
-    def _finish_deferred_auto_resize(self, revision: int, grow_only: bool) -> None:
+    def _finish_deferred_auto_resize(
+        self,
+        revision: int,
+        grow_only: bool,
+        scroll_value: int | None,
+        follow_bottom: bool,
+    ) -> None:
         if revision != self._content_revision:
             return
         if self._user_resized:
             self._keep_inside_available_screen()
+            self._restore_scroll_position(scroll_value, follow_bottom)
             return
         document = self.text_edit.document()
         document.setTextWidth(max(1, self.text_edit.viewport().width()))
@@ -320,6 +345,18 @@ class TranslationPopup(QWidget):
         if target_height != self.height():
             self.resize(self.width(), target_height)
         self._keep_inside_available_screen()
+        self._restore_scroll_position(scroll_value, follow_bottom)
+
+    def _restore_scroll_position(
+        self,
+        scroll_value: int | None,
+        follow_bottom: bool,
+    ) -> None:
+        if scroll_value is None:
+            return
+        scroll_bar = self.text_edit.verticalScrollBar()
+        target = scroll_bar.maximum() if follow_bottom else scroll_value
+        scroll_bar.setValue(min(target, scroll_bar.maximum()))
 
     def _show_popup(self, *, reposition: bool) -> None:
         if reposition:

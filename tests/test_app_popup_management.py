@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from quicktranslate.app import QuickTranslateApp
+from quicktranslate.model_catalog import EffectiveReasoning
 
 
 class FakePopup:
@@ -71,6 +72,18 @@ class AppPopupManagementTests(unittest.TestCase):
         self.assertEqual(app._retained_popups, [])
         retained.delete_later.assert_called_once_with()
         cancel.assert_not_called()
+
+    def test_reasoning_level_is_extracted_for_popup_label(self) -> None:
+        app = SimpleNamespace(settings=object())
+        reasoning = EffectiveReasoning({"effort": "low"}, "자동 → low", True)
+
+        with patch(
+            "quicktranslate.app.effective_reasoning_for_request",
+            return_value=reasoning,
+        ):
+            level = QuickTranslateApp._reasoning_effort_for_display(app, "model")
+
+        self.assertEqual(level, "low")
 
 
 if __name__ == "__main__":

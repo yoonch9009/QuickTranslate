@@ -31,7 +31,12 @@ from .model_catalog import MODEL_CATALOG
 from .popup import TranslationPopup
 from .settings import APP_DIR, LOCK_PATH, LOG_PATH, AppSettings
 from .settings_dialog import SettingsDialog
-from .translator import TranslationError, load_cached_translation, request_translation
+from .translator import (
+    TranslationError,
+    effective_reasoning_for_request,
+    load_cached_translation,
+    request_translation,
+)
 
 DUPLICATE_TRANSLATION_WINDOW_SECONDS = 0.8
 LOGGER = logging.getLogger(__name__)
@@ -288,6 +293,7 @@ class QuickTranslateApp(QObject):
                 cached.text,
                 cached.model,
                 used_fallback=cached.model != self.settings.primary_model,
+                reasoning_effort=self._reasoning_effort_for_display(cached.model),
             )
             return
 
@@ -337,6 +343,7 @@ class QuickTranslateApp(QObject):
             translated_text,
             model_name,
             used_fallback=model_name != self.settings.primary_model,
+            reasoning_effort=self._reasoning_effort_for_display(model_name),
         )
 
     def _handle_translation_partial(self, task_id: int, translated_text: str) -> None:
@@ -355,6 +362,17 @@ class QuickTranslateApp(QObject):
 
     def _show_error(self, message: str) -> None:
         self.popup.show_status("오류", message)
+
+    def _reasoning_effort_for_display(self, model_name: str) -> str:
+        config = effective_reasoning_for_request(model_name, self.settings).config
+        if not config:
+            return "기본값"
+        effort = config.get("effort") or config.get("reasoning_effort")
+        if effort:
+            return str(effort)
+        if config.get("enabled") is False:
+            return "none"
+        return "custom"
 
     def _record_success(self, signature: str) -> None:
         self._last_success_signature = signature

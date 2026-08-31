@@ -42,6 +42,18 @@ class PopupTests(unittest.TestCase):
 
         self.assertEqual(self.popup.model_label.text(), "폴백 · z-ai/glm-5.3-flash")
 
+    def test_model_label_displays_reasoning_effort(self) -> None:
+        self.popup.show_translation(
+            "번역",
+            "qwen/qwen3.8-flash",
+            reasoning_effort="none",
+        )
+
+        self.assertEqual(
+            self.popup.model_label.text(),
+            "qwen/qwen3.8-flash · none",
+        )
+
     def test_deferred_resize_fits_multiline_translation_without_scroll(self) -> None:
         text = "\n".join(f"번역 결과 {index}" for index in range(10))
 
@@ -83,6 +95,50 @@ class PopupTests(unittest.TestCase):
 
         self.assertLess(self.popup.width(), 580)
         self.assertLess(self.popup.height(), 420)
+
+    def test_streaming_updates_preserve_user_scroll_position(self) -> None:
+        first = "\n".join(f"번역 줄 {index}" for index in range(80))
+        self.popup.show_partial_translation(first)
+        self.application.processEvents()
+        scroll_bar = self.popup.text_edit.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.maximum() // 3)
+        reading_position = scroll_bar.value()
+
+        self.popup.show_partial_translation(first + "\n새 번역 줄")
+        self.application.processEvents()
+        self.application.processEvents()
+
+        self.assertGreater(reading_position, 0)
+        self.assertEqual(scroll_bar.value(), reading_position)
+
+    def test_final_translation_preserves_streaming_scroll_position(self) -> None:
+        text = "\n".join(f"번역 줄 {index}" for index in range(80))
+        self.popup.show_partial_translation(text)
+        self.application.processEvents()
+        scroll_bar = self.popup.text_edit.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.maximum() // 3)
+        reading_position = scroll_bar.value()
+
+        self.popup.show_translation(text + "\n마지막 줄", "model")
+        self.application.processEvents()
+        self.application.processEvents()
+
+        self.assertGreater(reading_position, 0)
+        self.assertEqual(scroll_bar.value(), reading_position)
+
+    def test_streaming_continues_following_when_user_is_at_bottom(self) -> None:
+        first = "\n".join(f"번역 줄 {index}" for index in range(80))
+        self.popup.show_partial_translation(first)
+        self.application.processEvents()
+        scroll_bar = self.popup.text_edit.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.maximum())
+
+        self.popup.show_partial_translation(first + "\n새 번역 줄")
+        self.application.processEvents()
+        self.application.processEvents()
+
+        self.assertGreater(scroll_bar.maximum(), 0)
+        self.assertEqual(scroll_bar.value(), scroll_bar.maximum())
 
     def test_popup_padding_is_reduced_by_half(self) -> None:
         margins = self.popup.panel.layout().contentsMargins()
