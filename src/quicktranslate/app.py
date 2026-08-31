@@ -189,6 +189,8 @@ class QuickTranslateApp(QObject):
         self.settings.save()
         for popup in [self.popup, *self._retained_popups]:
             popup.set_always_pin_mode(enabled)
+        if enabled:
+            self.popup.set_pinned(True)
 
     def _build_menu(self) -> QMenu:
         menu = QMenu()

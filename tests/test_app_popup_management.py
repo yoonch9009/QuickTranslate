@@ -28,6 +28,9 @@ class FakePopup:
     def set_always_pin_mode(self, enabled: bool) -> None:
         self.always_pin_mode = enabled
 
+    def set_pinned(self, pinned: bool) -> None:
+        self.is_pinned = pinned
+
     def show_partial_translation(self, text: str) -> None:
         self.partial_texts.append(text)
 
@@ -154,7 +157,7 @@ class AppPopupManagementTests(unittest.TestCase):
         self.assertIn(2, app._task_popups)
         record_success.assert_called_once_with("first")
 
-    def test_always_pin_toggle_is_saved_and_synced_without_repinning_windows(self) -> None:
+    def test_always_pin_toggle_pins_current_and_preserves_older_windows(self) -> None:
         current = FakePopup(visible=True, pinned=False)
         retained = FakePopup(visible=True, pinned=True)
         settings = SimpleNamespace(always_pin_new_popups=False, save=Mock())
@@ -171,7 +174,7 @@ class AppPopupManagementTests(unittest.TestCase):
         settings.save.assert_called_once_with()
         self.assertTrue(current.always_pin_mode)
         self.assertTrue(retained.always_pin_mode)
-        self.assertFalse(current.is_pinned)
+        self.assertTrue(current.is_pinned)
         self.assertTrue(retained.is_pinned)
 
     def test_reasoning_level_is_extracted_for_popup_label(self) -> None:
