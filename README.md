@@ -127,8 +127,3 @@ OpenRouter와 DeepSeek 직접 호출에는 해당 API 키가 필요합니다. AP
 - 글로벌 키 입력 감지는 `keyboard` 라이브러리를 사용합니다.
 - 일부 관리자 권한 프로그램 위에서는 전역 키 감지가 제한될 수 있습니다.
 - 지원 모델과 파라미터는 제공자의 API 지원 범위에 따라 달라질 수 있습니다.
-
-## Contributors
-
-- [@yoonch9009](https://github.com/yoonch9009) — 프로젝트 제작 및 유지보수
-- 전체 기여 내역은 [GitHub Contributors](https://github.com/yoonch9009/QuickTranslate/graphs/contributors)에서 확인할 수 있습니다.
