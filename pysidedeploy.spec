@@ -21,7 +21,7 @@ icon = assets/quicktranslate.ico
 [python]
 
 # python path
-python_path = .venv314/Scripts/python.exe
+python_path = .venv314\Scripts\python.exe
 
 # python packages to install
 packages = Nuitka==4.1.3,ordered-set==4.1.0,zstandard==0.25.0
