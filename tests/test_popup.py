@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import unittest
 from time import monotonic
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -330,6 +330,58 @@ class PopupTests(unittest.TestCase):
 
         self.assertTrue(self.popup.is_pinned)
         self.assertEqual(self.popup.pin_button.text(), "고정됨")
+
+    def test_native_drag_cannot_be_mistaken_for_an_outside_click(self) -> None:
+        self.popup.show_loading()
+        self.application.processEvents()
+        handle = Mock()
+        handle.startSystemMove.return_value = True
+        closed: list[bool] = []
+        self.popup.closed.connect(lambda: closed.append(True))
+
+        with (
+            patch.object(self.popup, "windowHandle", return_value=handle),
+            patch("quicktranslate.popup.QCursor.pos", return_value=QPoint(9999, 9999)),
+        ):
+            self.popup._start_move(QPoint(100, 100))
+            self.popup._outside_clicks_enabled_at = monotonic() - 1
+            with patch.object(
+                self.popup,
+                "_is_virtual_key_down",
+                side_effect=[False, True, False],
+            ):
+                self.popup._poll_global_input()
+
+            self.assertTrue(self.popup.isVisible())
+            self.assertTrue(self.popup._moving)
+            self.assertEqual(closed, [])
+
+            with patch.object(
+                self.popup,
+                "_is_virtual_key_down",
+                return_value=False,
+            ):
+                self.popup._poll_global_input()
+
+        self.assertTrue(self.popup.isVisible())
+        self.assertFalse(self.popup._moving)
+
+    def test_streaming_resize_waits_until_native_drag_finishes(self) -> None:
+        self.popup.show_loading()
+        self.application.processEvents()
+        initial_size = self.popup.size()
+        handle = Mock()
+        handle.startSystemMove.return_value = True
+
+        with patch.object(self.popup, "windowHandle", return_value=handle):
+            self.popup._start_move(QPoint(100, 100))
+            self.popup.show_partial_translation("길어지는 번역 결과 " * 100)
+
+            self.assertEqual(self.popup.size(), initial_size)
+            self.popup._finish_pointer_interaction()
+
+        self.assertGreaterEqual(self.popup.width(), initial_size.width())
+        self.assertGreaterEqual(self.popup.height(), initial_size.height())
 
 
 if __name__ == "__main__":

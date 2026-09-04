@@ -59,12 +59,14 @@ class TranslationPopup(QWidget):
         self._resize_origin = QPoint()
         self._resize_geometry = QRect()
         self._moving = False
+        self._system_pointer_interaction = False
         self._move_offset = QPoint()
         self._loading = False
         self._pinned = False
         self._comparison_mode = False
         self._user_resized = False
         self._content_revision = 0
+        self._pending_auto_resize_grow_only: bool | None = None
         self._outside_clicks_enabled_at = 0.0
         self._global_esc_down = False
         self._global_left_down = False
@@ -230,10 +232,12 @@ class TranslationPopup(QWidget):
             if event.type() == QEvent.Type.MouseMove:
                 local_pos = self._event_pos_in_self(watched, event)
                 if self._resize_edges and event.buttons() & Qt.LeftButton:
-                    self._resize_window(event.globalPosition().toPoint())
+                    if not self._system_pointer_interaction:
+                        self._resize_window(event.globalPosition().toPoint())
                     return True
                 if self._moving and event.buttons() & Qt.LeftButton:
-                    self.move(event.globalPosition().toPoint() - self._move_offset)
+                    if not self._system_pointer_interaction:
+                        self.move(event.globalPosition().toPoint() - self._move_offset)
                     return True
                 self._update_cursor(local_pos)
 
@@ -242,12 +246,10 @@ class TranslationPopup(QWidget):
                 and event.button() == Qt.LeftButton
             ):
                 if self._resize_edges:
-                    self._resize_edges = Qt.Edges()
-                    self.unsetCursor()
+                    self._finish_pointer_interaction()
                     return True
                 if self._moving:
-                    self._moving = False
-                    self.action_bar.setCursor(Qt.OpenHandCursor)
+                    self._finish_pointer_interaction()
                     return True
 
             if (
@@ -268,6 +270,9 @@ class TranslationPopup(QWidget):
         super().hideEvent(event)
 
     def dismiss(self) -> None:
+        self._moving = False
+        self._resize_edges = Qt.Edges()
+        self._system_pointer_interaction = False
         self.set_pinned(False)
         self.closed.emit()
         self.hide()
@@ -277,9 +282,13 @@ class TranslationPopup(QWidget):
         self._auto_max_height = max(auto_max_height, self._MIN_HEIGHT)
 
     def begin_new_translation(self, *, pinned: bool = False) -> None:
+        self._moving = False
+        self._resize_edges = Qt.Edges()
+        self._system_pointer_interaction = False
         self._reset_comparison_view()
         self.set_pinned(pinned)
         self._user_resized = False
+        self._pending_auto_resize_grow_only = None
 
     @property
     def is_pinned(self) -> bool:
@@ -482,6 +491,9 @@ class TranslationPopup(QWidget):
             scroll_bar.setValue(min(target, scroll_bar.maximum()))
 
     def _auto_resize_comparison(self, *, grow_only: bool = False) -> None:
+        if self._pointer_interaction_active:
+            self._pending_auto_resize_grow_only = grow_only
+            return
         target_width = self._auto_max_width
         text_width = max(180, (target_width - self._TEXT_CHROME_WIDTH - 10) // 2)
         heights = []
@@ -528,6 +540,9 @@ class TranslationPopup(QWidget):
         )
 
     def _auto_resize_to_content(self, text: str, *, grow_only: bool = False) -> None:
+        if self._pointer_interaction_active:
+            self._pending_auto_resize_grow_only = grow_only
+            return
         lines = text.splitlines() or [text]
         metrics = QFontMetrics(self.text_edit.font())
         longest_line_width = max(
@@ -579,6 +594,10 @@ class TranslationPopup(QWidget):
             self._keep_inside_available_screen()
             self._restore_scroll_position(scroll_value, follow_bottom)
             return
+        if self._pointer_interaction_active:
+            self._pending_auto_resize_grow_only = grow_only
+            self._restore_scroll_position(scroll_value, follow_bottom)
+            return
         document = self.text_edit.document()
         document.setTextWidth(max(1, self.text_edit.viewport().width()))
         target_height = max(
@@ -620,6 +639,8 @@ class TranslationPopup(QWidget):
         )
 
     def _keep_inside_available_screen(self) -> None:
+        if self._pointer_interaction_active:
+            return
         screen = self.screen() or QGuiApplication.screenAt(self.frameGeometry().center())
         screen = screen or QGuiApplication.primaryScreen()
         if screen is None:
@@ -670,21 +691,52 @@ class TranslationPopup(QWidget):
         return watched.mapTo(self, pos)
 
     def _start_move(self, global_pos: QPoint) -> None:
-        handle = self.windowHandle()
-        if handle is not None and handle.startSystemMove():
-            return
         self._moving = True
+        self._system_pointer_interaction = False
         self._move_offset = global_pos - self.frameGeometry().topLeft()
         self.action_bar.setCursor(Qt.ClosedHandCursor)
+        handle = self.windowHandle()
+        if handle is not None and handle.startSystemMove():
+            self._system_pointer_interaction = True
+            return
 
     def _start_resize(self, edges: Qt.Edges, global_pos: QPoint) -> None:
         self._user_resized = True
-        handle = self.windowHandle()
-        if handle is not None and handle.startSystemResize(edges):
-            return
         self._resize_edges = edges
+        self._system_pointer_interaction = False
         self._resize_origin = global_pos
         self._resize_geometry = self.geometry()
+        handle = self.windowHandle()
+        if handle is not None and handle.startSystemResize(edges):
+            self._system_pointer_interaction = True
+            return
+
+    @property
+    def _pointer_interaction_active(self) -> bool:
+        return self._moving or bool(self._resize_edges)
+
+    def _finish_pointer_interaction(self) -> None:
+        was_moving = self._moving
+        self._moving = False
+        self._resize_edges = Qt.Edges()
+        self._system_pointer_interaction = False
+        if was_moving:
+            self.action_bar.setCursor(Qt.OpenHandCursor)
+        else:
+            self.unsetCursor()
+        self._arm_outside_click_guard()
+
+        pending_grow_only = self._pending_auto_resize_grow_only
+        self._pending_auto_resize_grow_only = None
+        if pending_grow_only is None or self._user_resized:
+            self._keep_inside_available_screen()
+            return
+        if self._comparison_mode:
+            self._auto_resize_comparison(grow_only=pending_grow_only)
+        else:
+            self._auto_resize_to_content(
+                self.text_edit.toPlainText(), grow_only=pending_grow_only
+            )
 
     def _update_cursor(self, pos: QPoint) -> None:
         edges = self._resize_edges_for_pos(pos)
@@ -812,6 +864,12 @@ class TranslationPopup(QWidget):
 
         left_down = self._is_virtual_key_down(self._VK_LBUTTON)
         right_down = self._is_virtual_key_down(self._VK_RBUTTON)
+
+        if self._pointer_interaction_active and not left_down:
+            self._finish_pointer_interaction()
+            self._global_left_down = False
+            self._global_right_down = right_down
+            return
 
         if self._should_hide_for_global_click(left_down, self._global_left_down):
             self.dismiss()
