@@ -267,6 +267,7 @@ class AppPopupManagementTests(unittest.TestCase):
         app = SimpleNamespace(
             settings=settings,
             _popup_sources={popup: ("원문", None)},
+            _update_task=None,
             _comparison_task_popups={},
             _active_tasks={},
             _task_counter=4,

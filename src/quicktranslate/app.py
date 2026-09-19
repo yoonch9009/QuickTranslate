@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import shutil
 import sys
 from time import monotonic
 
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QMenu,
     QMessageBox,
+    QProgressDialog,
     QStyle,
     QSystemTrayIcon,
 )
@@ -38,6 +40,7 @@ from .translator import (
     load_cached_translation,
     request_translation,
 )
+from .updater import UpdateTask, executable_path, launch_replacement
 
 DUPLICATE_TRANSLATION_WINDOW_SECONDS = 0.8
 LOGGER = logging.getLogger(__name__)
@@ -131,6 +134,8 @@ class QuickTranslateApp(QObject):
         ] = {}
         self._last_success_signature = ""
         self._last_success_at = 0.0
+        self._update_task: UpdateTask | None = None
+        self._update_dialog: QProgressDialog | None = None
 
         self.clipboard_poll_timer = QTimer(self)
         self.clipboard_poll_timer.setSingleShot(True)
@@ -210,6 +215,8 @@ class QuickTranslateApp(QObject):
 
         translate_action = QAction("클립보드 번역", menu)
         settings_action = QAction("설정", menu)
+        self.update_action = QAction("원클릭 업데이트", menu)
+        self.update_action.triggered.connect(self.start_update)
         quit_action = QAction("종료", menu)
 
         translate_action.triggered.connect(self._begin_clipboard_capture)
@@ -219,9 +226,72 @@ class QuickTranslateApp(QObject):
         menu.addAction(translate_action)
         menu.addSeparator()
         menu.addAction(settings_action)
+        menu.addAction(self.update_action)
         menu.addSeparator()
         menu.addAction(quit_action)
         return menu
+
+    def start_update(self) -> None:
+        if self._update_task is not None:
+            return
+        if self._active_tasks or self.pending_clipboard_capture:
+            QMessageBox.information(None, "업데이트", "진행 중인 번역이 끝난 뒤 업데이트하세요.")
+            return
+        try:
+            target = executable_path()
+        except ValueError as exc:
+            QMessageBox.information(None, "업데이트", str(exc))
+            return
+        self._update_dialog = QProgressDialog(
+            "최신 버전 확인 중… 완료되면 자동으로 재시작합니다.", "취소", 0, 0
+        )
+        self._update_dialog.setWindowTitle("QuickTranslate 업데이트")
+        self._update_dialog.setAutoClose(False)
+        self._update_dialog.setAutoReset(False)
+        self._update_task = UpdateTask(target, __version__)
+        self._update_dialog.canceled.connect(self._update_task.cancel_event.set)
+        self._update_task.signals.progress.connect(self._update_progress)
+        self._update_task.signals.ready.connect(self._install_update)
+        self._update_task.signals.current.connect(
+            lambda: self._finish_update(f"현재 최신 버전입니다: {__version__}")
+        )
+        self._update_task.signals.failed.connect(self._finish_update)
+        self._update_task.signals.cancelled.connect(lambda: self._finish_update(""))
+        self.update_action.setEnabled(False)
+        self._update_dialog.show()
+        self.thread_pool.start(self._update_task)
+
+    def _update_progress(self, percent: int, message: str) -> None:
+        if self._update_dialog is not None and not self._update_task.cancel_event.is_set():
+            self._update_dialog.setRange(0, 100)
+            self._update_dialog.setLabelText(message)
+            self._update_dialog.setValue(percent)
+
+    def _finish_update(self, message: str) -> None:
+        if self._update_dialog is not None:
+            self._update_dialog.close()
+            self._update_dialog.deleteLater()
+            self._update_dialog = None
+        self._update_task = None
+        self.update_action.setEnabled(True)
+        if message:
+            QMessageBox.information(None, "QuickTranslate 업데이트", message)
+
+    def _install_update(self, source, digest: str) -> None:
+        task = self._update_task
+        if task.cancel_event.is_set():
+            shutil.rmtree(source.parent, ignore_errors=True)
+            self._finish_update("")
+            return
+        try:
+            launch_replacement(task.target, source, digest)
+        except OSError as exc:
+            shutil.rmtree(source.parent, ignore_errors=True)
+            self._finish_update(f"업데이트 교체 준비 실패: {exc}")
+            return
+        self._update_dialog.setCancelButton(None)
+        self._update_dialog.setLabelText("프로그램을 교체하고 다시 시작합니다…")
+        self.quit()
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.Trigger:
@@ -254,6 +324,8 @@ class QuickTranslateApp(QObject):
         )
 
     def _begin_clipboard_capture(self) -> None:
+        if self._update_task is not None:
+            return
         if not self._can_begin_clipboard_capture():
             return
 
@@ -423,6 +495,8 @@ class QuickTranslateApp(QObject):
         )
 
     def _start_comparison(self, popup: TranslationPopup) -> None:
+        if self._update_task is not None:
+            return
         source = self._popup_sources.get(popup)
         fallback_model = self.settings.fallback_model.strip()
         primary_model = self.settings.primary_model.strip()
