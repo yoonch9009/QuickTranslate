@@ -19,6 +19,7 @@ from quicktranslate.updater import (
     UpdateTask,
     download_release,
     executable_path,
+    launch_replacement,
     parse_release,
     replacement_script,
 )
@@ -154,6 +155,14 @@ def test_helper_launch_failure_keeps_app_running(tmp_path):
     assert not source.parent.exists()
 
 
+def test_installer_launch_uses_working_windows_console_flags(tmp_path):
+    # DETACHED_PROCESS combined with CREATE_NO_WINDOW made PowerShell exit 0
+    # without executing the script during the installed-EXE smoke test.
+    with patch("quicktranslate.updater.subprocess.Popen") as launch:
+        launch_replacement(tmp_path / "app.exe", tmp_path / "new.exe", "0" * 64)
+    assert launch.call_args.kwargs["creationflags"] == subprocess.CREATE_NO_WINDOW
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell replacement integration")
 @pytest.mark.parametrize("scenario", ["success", "bad_hash", "launch_failure"])
 def test_windows_helper_replaces_and_preserves_backup_with_quoted_paths(scenario):
@@ -183,7 +192,8 @@ def test_windows_helper_replaces_and_preserves_backup_with_quoted_paths(scenario
             )
         command = base64.b64encode(script.encode("utf-16le")).decode("ascii")
         result = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", command],
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+             "-EncodedCommand", command],
             capture_output=True, timeout=20, creationflags=subprocess.CREATE_NO_WINDOW, check=False,
         )
         if scenario == "success":

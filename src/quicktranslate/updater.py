@@ -159,7 +159,7 @@ def launch_replacement(target: Path, source: Path, digest: str) -> None:
     subprocess.Popen(
         [str(powershell), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
          "-EncodedCommand", encoded],
-        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+        creationflags=subprocess.CREATE_NO_WINDOW,
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         close_fds=True,
     )
