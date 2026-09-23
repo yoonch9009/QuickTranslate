@@ -12,7 +12,7 @@ Windows 백그라운드에서 실행되며, 클립보드의 텍스트나 이미�
 [최신 Windows EXE 다운로드](https://github.com/yoonch9009/QuickTranslate/releases/latest)
 
 별도 Python 설치 없이 릴리즈의 `QuickTranslate.exe`를 실행하면 됩니다. 현재 릴리즈는
-`v1.8.0`이며, Windows 64비트용 단일 실행 파일입니다.
+`v1.8.1`이며, Windows 64비트용 단일 실행 파일입니다.
 
 ## 원클릭 업데이트
 

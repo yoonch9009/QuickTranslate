@@ -50,6 +50,14 @@ class _TurnState:
 
 
 def find_codex_executable() -> str | None:
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        bundled_root = Path(local_app_data) / "OpenAI" / "Codex" / "bin"
+        if bundled_root.is_dir():
+            bundled = list(bundled_root.glob("*/codex.exe"))
+            if bundled:
+                return str(max(bundled, key=lambda path: path.stat().st_mtime))
+
     direct = shutil.which("codex.exe")
     if direct:
         return direct
