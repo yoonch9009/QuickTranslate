@@ -6,12 +6,12 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from hashlib import sha256
-from threading import Lock
+from threading import Event, Lock
 from time import monotonic
 
 import requests
 
-from .codex_client import CodexProviderError, request_codex_translation
+from .codex_client import CodexProviderError, TranslationCancelled, request_codex_translation
 from .model_catalog import MODEL_CATALOG, EffectiveReasoning
 from .model_profiles import recommended_parameters_for
 from .settings import PARAMETER_MODE_AUTO, REASONING_MODE_AUTO, AppSettings
@@ -64,6 +64,7 @@ class RequestFailure:
     log_message: str
     retryable: bool
     status_code: int | None = None
+    allow_fallback: bool = True
 
 
 @dataclass(frozen=True)
@@ -438,9 +439,7 @@ def prepare_deepseek_request(
             {"role": "user", "content": user_content},
         ],
         "max_tokens": (
-            8192
-            if image_data_url
-            else estimate_max_output_tokens(source_text, PROVIDER_DEEPSEEK)
+            8192 if image_data_url else estimate_max_output_tokens(source_text, PROVIDER_DEEPSEEK)
         ),
         "stream": False,
     }
@@ -618,9 +617,7 @@ def send_request(
     except requests.HTTPError as exc:
         detail = exc.response.text if exc.response is not None else str(exc)
         status_code = exc.response.status_code if exc.response is not None else 0
-        raise RuntimeError(
-            failure_from_status(status_code, detail, model, label)
-        ) from exc
+        raise RuntimeError(failure_from_status(status_code, detail, model, label)) from exc
 
     try:
         return response.json()
@@ -687,9 +684,7 @@ def send_streaming_request(
         detail = response.text
         status_code = response.status_code
         response.close()
-        raise RuntimeError(
-            failure_from_status(status_code, detail, model, label)
-        ) from exc
+        raise RuntimeError(failure_from_status(status_code, detail, model, label)) from exc
 
     response.encoding = "utf-8"
     try:
@@ -746,6 +741,8 @@ def should_retry_with_fallback(
     *,
     image_request: bool = False,
 ) -> bool:
+    if not failure.allow_fallback:
+        return False
     if image_request:
         return True
     if not settings.fallback_on_provider_error_only:
@@ -765,7 +762,14 @@ def request_translation(
     app_name: str = "QuickTranslate",
     on_delta: Callable[[str], None] | None = None,
     only_model: str | None = None,
+    on_attempt: Callable[[str, str], None] | None = None,
+    cancel_event: Event | None = None,
 ) -> TranslationResult:
+    def check_cancelled() -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise TranslationCancelled()
+
+    check_cancelled()
     source_text = source_text.strip()
     if not source_text and not image_data_url:
         raise TranslationError("번역할 텍스트나 이미지가 비어 있습니다.")
@@ -788,6 +792,9 @@ def request_translation(
     if only_model is None:
         cached = load_cached_translation(source_text, settings, image_data_url)
         if cached is not None:
+            check_cancelled()
+            if on_attempt is not None:
+                on_attempt(cached.model, "")
             return cached
 
     last_failure: RequestFailure | None = None
@@ -795,11 +802,21 @@ def request_translation(
     if image_data_url:
         read_timeout = max(read_timeout, 90.0)
     for index, model in enumerate(models):
+        check_cancelled()
+        actual_model = model
+        if on_attempt is not None:
+            on_attempt(model, last_failure.user_message if last_failure else "")
+        check_cancelled()
+
+        def model_changed(new_model: str) -> None:
+            nonlocal actual_model
+            actual_model = "codex/" + new_model.removeprefix("codex/")
+            if on_attempt is not None:
+                on_attempt(actual_model, "Codex 서버에서 모델이 전환됐습니다.")
+
         provider = provider_for_model(model)
         label = provider_label(provider)
-        api_key = "" if provider == PROVIDER_CODEX else api_key_for_provider(
-            provider, settings
-        )
+        api_key = "" if provider == PROVIDER_CODEX else api_key_for_provider(provider, settings)
         if provider != PROVIDER_CODEX and not api_key:
             failure = RequestFailure(
                 user_message=f"{label} API Key가 설정되지 않았습니다.",
@@ -815,8 +832,7 @@ def request_translation(
         effective = effective_reasoning_for_request(model, settings)
         parameters = effective_parameters_for_request(model, settings)
         LOGGER.info(
-            "Translation request: provider=%s model=%s media=%s reasoning=%s "
-            "parameters=%s",
+            "Translation request: provider=%s model=%s media=%s reasoning=%s parameters=%s",
             provider,
             model,
             "image" if image_data_url else "text",
@@ -847,28 +863,35 @@ def request_translation(
                         ),
                         timeout=codex_timeout,
                         on_delta=on_delta,
+                        cancel_event=cancel_event,
+                        on_model_changed=model_changed,
                     )
                 except CodexProviderError as exc:
+                    check_cancelled()
                     raise RuntimeError(
                         RequestFailure(
                             user_message=exc.user_message,
                             log_message=exc.detail,
                             retryable=exc.retryable,
+                            allow_fallback=exc.allow_fallback,
                         )
                     ) from exc
             else:
+
+                def emit_delta(delta: str) -> None:
+                    check_cancelled()
+                    if on_delta is not None:
+                        on_delta(delta)
+
                 headers = build_headers(api_key, app_name, provider)
                 payload = prepare_request(source_text, settings, model, image_data_url)
-                if (
-                    provider == PROVIDER_OPENROUTER
-                    and on_delta is not None
-                    and not image_data_url
-                ):
+                check_cancelled()
+                if provider == PROVIDER_OPENROUTER and on_delta is not None and not image_data_url:
                     response_data = send_streaming_request(
                         payload,
                         headers,
                         settings,
-                        on_delta,
+                        emit_delta,
                         url=endpoint_for_provider(provider),
                         label=label,
                         read_timeout=read_timeout,
@@ -886,6 +909,7 @@ def request_translation(
                         read_timeout=read_timeout,
                     )
                 translated_text = extract_output_text_for(provider, response_data)
+            check_cancelled()
             if not translated_text:
                 failure = RequestFailure(
                     user_message="번역 응답이 비어 있습니다.",
@@ -895,8 +919,8 @@ def request_translation(
                 log_failure(model, failure)
                 raise TranslationError(failure.user_message)
 
-            result = TranslationResult(text=translated_text, model=model)
-            if only_model is None and model == settings.primary_model.strip():
+            result = TranslationResult(text=translated_text, model=actual_model)
+            if only_model is None and actual_model == settings.primary_model.strip():
                 store_cached_translation(source_text, settings, result, image_data_url)
             return result
         except RuntimeError as exc:

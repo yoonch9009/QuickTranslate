@@ -5,7 +5,10 @@ import json
 import logging
 import shutil
 import sys
+from copy import deepcopy
+from threading import Event
 from time import monotonic
+from uuid import uuid4
 
 from PySide6.QtCore import (
     QLockFile,
@@ -35,6 +38,7 @@ from .popup import TranslationPopup
 from .settings import APP_DIR, LOCK_PATH, LOG_PATH, AppSettings
 from .settings_dialog import SettingsDialog
 from .translator import (
+    TranslationCancelled,
     TranslationError,
     effective_reasoning_for_request,
     load_cached_translation,
@@ -56,6 +60,8 @@ class TranslationSignals(QObject):
     success = Signal(int, str, str)
     partial = Signal(int, str)
     failure = Signal(int, str)
+    attempt = Signal(int, str, str)
+    cancelled = Signal(int)
 
 
 class TranslationTask(QRunnable):
@@ -72,15 +78,32 @@ class TranslationTask(QRunnable):
         self.task_id = task_id
         self.source_text = source_text
         self.image_data_url = image_data_url
-        self.settings = settings
+        self.settings = deepcopy(settings)
         self.only_model = only_model
         self.signals = TranslationSignals()
         self._partial_text = ""
         self._last_partial_emit_at = 0.0
+        self.cancel_event = Event()
+        self.trace_id = f"{uuid4().hex[:8]}-{task_id}"
+        self._queued_at = monotonic()
+        self._current_model = only_model or settings.primary_model
+        LOGGER.info(
+            "translation_queued task=%s requested=%s media=%s input_chars=%d",
+            self.trace_id,
+            self._current_model,
+            "image" if image_data_url else "text",
+            len(source_text),
+        )
         self.setAutoDelete(False)
 
     @Slot()
     def run(self) -> None:
+        started = monotonic()
+        LOGGER.info(
+            "translation_started task=%s queue_seconds=%.3f",
+            self.trace_id,
+            started - self._queued_at,
+        )
         try:
             result = request_translation(
                 self.source_text,
@@ -88,17 +111,72 @@ class TranslationTask(QRunnable):
                 image_data_url=self.image_data_url,
                 on_delta=self._handle_delta,
                 only_model=self.only_model,
+                on_attempt=self._handle_attempt,
+                cancel_event=self.cancel_event,
             )
+            if self.cancel_event.is_set():
+                raise TranslationCancelled()
+        except TranslationCancelled:
+            LOGGER.info(
+                "translation_cancelled task=%s model=%s elapsed=%.3f",
+                self.trace_id,
+                self._current_model,
+                monotonic() - self._queued_at,
+            )
+            self.signals.cancelled.emit(self.task_id)
+            return
         except TranslationError as exc:
+            LOGGER.warning(
+                "translation_failed task=%s model=%s elapsed=%.3f reason=%s",
+                self.trace_id,
+                self._current_model,
+                monotonic() - self._queued_at,
+                str(exc),
+            )
             self.signals.failure.emit(self.task_id, str(exc))
             return
         except Exception as exc:  # noqa: BLE001 - keep the tray app alive on worker failures
+            LOGGER.warning(
+                "translation_failed task=%s model=%s elapsed=%.3f error_type=%s",
+                self.trace_id,
+                self._current_model,
+                monotonic() - self._queued_at,
+                type(exc).__name__,
+            )
             self.signals.failure.emit(self.task_id, f"알 수 없는 오류: {exc}")
             return
 
+        LOGGER.info(
+            "translation_completed task=%s requested=%s final=%s elapsed=%.3f output_chars=%d",
+            self.trace_id,
+            self.only_model or self.settings.primary_model,
+            result.model,
+            monotonic() - self._queued_at,
+            len(result.text),
+        )
         self.signals.success.emit(self.task_id, result.text, result.model)
 
+    def cancel(self) -> None:
+        self.cancel_event.set()
+
+    def _handle_attempt(self, model: str, reason: str) -> None:
+        if self.cancel_event.is_set():
+            return
+        self._partial_text = ""
+        self._last_partial_emit_at = 0.0
+        self._current_model = model
+        LOGGER.info(
+            "translation_attempt task=%s model=%s elapsed=%.3f reason=%s",
+            self.trace_id,
+            model,
+            monotonic() - self._queued_at,
+            reason or "initial",
+        )
+        self.signals.attempt.emit(self.task_id, model, reason)
+
     def _handle_delta(self, delta: str) -> None:
+        if self.cancel_event.is_set():
+            return
         self._partial_text += delta
         now = monotonic()
         if now - self._last_partial_emit_at >= 0.05 or "\n" in delta:
@@ -117,9 +195,11 @@ class QuickTranslateApp(QObject):
         self._always_pin_new_popups = self.settings.always_pin_new_popups
         self._retained_popups: list[TranslationPopup] = []
         self.popup = self._create_popup()
-        self.thread_pool = QThreadPool.globalInstance()
+        self.background_pool = QThreadPool.globalInstance()
+        self.thread_pool = QThreadPool(self)
+        self.thread_pool.setMaxThreadCount(2)
         self.metadata_task = MetadataRefreshTask()
-        self.thread_pool.start(self.metadata_task)
+        self.background_pool.start(self.metadata_task)
         self.pending_clipboard_capture = False
         self._clipboard_baseline_text = ""
         self._clipboard_baseline_image_key = 0
@@ -129,9 +209,7 @@ class QuickTranslateApp(QObject):
         self._task_popups: dict[int, TranslationPopup] = {}
         self._task_signatures: dict[int, str] = {}
         self._comparison_task_popups: dict[int, TranslationPopup] = {}
-        self._popup_sources: dict[
-            TranslationPopup, tuple[str, str | None]
-        ] = {}
+        self._popup_sources: dict[TranslationPopup, tuple[str, str | None]] = {}
         self._last_success_signature = ""
         self._last_success_at = 0.0
         self._update_task: UpdateTask | None = None
@@ -178,12 +256,8 @@ class QuickTranslateApp(QObject):
         popup.setWindowIcon(self.app_icon)
         popup.set_always_pin_mode(self._always_pin_new_popups)
         popup.always_pin_changed.connect(self._set_always_pin_new_popups)
-        popup.comparison_requested.connect(
-            lambda popup=popup: self._start_comparison(popup)
-        )
-        popup.closed.connect(
-            lambda retained_popup=popup: self._handle_popup_closed(retained_popup)
-        )
+        popup.comparison_requested.connect(lambda popup=popup: self._start_comparison(popup))
+        popup.closed.connect(lambda retained_popup=popup: self._handle_popup_closed(retained_popup))
         return popup
 
     def _prepare_popup_for_new_translation(self) -> None:
@@ -259,7 +333,7 @@ class QuickTranslateApp(QObject):
         self._update_task.signals.cancelled.connect(lambda: self._finish_update(""))
         self.update_action.setEnabled(False)
         self._update_dialog.show()
-        self.thread_pool.start(self._update_task)
+        self.background_pool.start(self._update_task)
 
     def _update_progress(self, percent: int, message: str) -> None:
         if self._update_dialog is not None and not self._update_task.cancel_event.is_set():
@@ -345,9 +419,7 @@ class QuickTranslateApp(QObject):
     def _can_begin_clipboard_capture(self) -> bool:
         if self.pending_clipboard_capture:
             return False
-        current_is_translating = any(
-            popup is self.popup for popup in self._task_popups.values()
-        )
+        current_is_translating = any(popup is self.popup for popup in self._task_popups.values())
         current_is_translating = current_is_translating or any(
             popup is self.popup for popup in self._comparison_task_popups.values()
         )
@@ -361,9 +433,7 @@ class QuickTranslateApp(QObject):
         clipboard_text = clipboard.text().strip()
         clipboard_image = clipboard.image()
         image_key = int(clipboard_image.cacheKey()) if not clipboard_image.isNull() else 0
-        clipboard_changed = (
-            bool(clipboard_text) and clipboard_text != self._clipboard_baseline_text
-        )
+        clipboard_changed = bool(clipboard_text) and clipboard_text != self._clipboard_baseline_text
         image_changed = bool(image_key) and image_key != self._clipboard_baseline_image_key
         elapsed_ms = (monotonic() - self._clipboard_capture_started_at) * 1000
         timed_out = elapsed_ms >= self.settings.clipboard_settle_timeout_ms
@@ -426,18 +496,52 @@ class QuickTranslateApp(QObject):
         task.signals.success.connect(self._handle_translation_success)
         task.signals.partial.connect(self._handle_translation_partial)
         task.signals.failure.connect(self._handle_translation_failure)
+        task.signals.attempt.connect(self._handle_translation_attempt)
+        task.signals.cancelled.connect(self._handle_translation_cancelled)
         self._active_tasks[task_id] = task
         self._task_popups[task_id] = self.popup
         self._task_signatures[task_id] = signature
+        self.popup.show_request_status(
+            self.settings.primary_model,
+            self._reasoning_effort_for_display(self.settings.primary_model),
+            "",
+            queued=True,
+        )
         self.thread_pool.start(task)
+
+    def _handle_translation_attempt(self, task_id: int, model: str, reason: str) -> None:
+        comparison = task_id in self._comparison_task_popups
+        popup = (
+            self._comparison_task_popups.get(task_id)
+            if comparison
+            else self._task_popups.get(task_id)
+        )
+        task = self._active_tasks.get(task_id)
+        if popup is None or task is None or task.cancel_event.is_set():
+            return
+        requested = (
+            task.settings.fallback_model
+            if model == task.settings.fallback_model
+            else task.settings.primary_model
+        )
+        config = effective_reasoning_for_request(requested, task.settings).config or {}
+        effort = str(config.get("effort") or config.get("reasoning_effort") or "기본값")
+        popup.show_request_status(model, effort, reason, comparison=comparison)
+
+    def _handle_translation_cancelled(self, task_id: int) -> None:
+        self._active_tasks.pop(task_id, None)
+        self._task_popups.pop(task_id, None)
+        self._task_signatures.pop(task_id, None)
+        self._comparison_task_popups.pop(task_id, None)
 
     def _cancel_popup_translations(self, popup: TranslationPopup) -> None:
         task_ids = [
-            task_id
-            for task_id, task_popup in self._task_popups.items()
-            if task_popup is popup
+            task_id for task_id, task_popup in self._task_popups.items() if task_popup is popup
         ]
         for task_id in task_ids:
+            task = self._active_tasks.get(task_id)
+            if task is not None:
+                task.cancel()
             self._task_popups.pop(task_id, None)
             self._task_signatures.pop(task_id, None)
         comparison_ids = [
@@ -446,6 +550,9 @@ class QuickTranslateApp(QObject):
             if task_popup is popup
         ]
         for task_id in comparison_ids:
+            task = self._active_tasks.get(task_id)
+            if task is not None:
+                task.cancel()
             self._comparison_task_popups.pop(task_id, None)
 
     def _handle_translation_success(
@@ -454,7 +561,7 @@ class QuickTranslateApp(QObject):
         translated_text: str,
         model_name: str,
     ) -> None:
-        self._active_tasks.pop(task_id, None)
+        task = self._active_tasks.pop(task_id, None)
         popup = self._task_popups.pop(task_id, None)
         signature = self._task_signatures.pop(task_id, "")
         if popup is None:
@@ -463,8 +570,10 @@ class QuickTranslateApp(QObject):
         popup.show_translation(
             translated_text,
             model_name,
-            used_fallback=model_name != self.settings.primary_model,
-            reasoning_effort=self._reasoning_effort_for_display(model_name),
+            used_fallback=model_name != getattr(task, "settings", self.settings).primary_model,
+            reasoning_effort=self._reasoning_effort_for_display(
+                model_name, getattr(task, "settings", self.settings)
+            ),
         )
         self._set_comparison_available(popup, model_name)
 
@@ -475,16 +584,16 @@ class QuickTranslateApp(QObject):
         popup.show_partial_translation(translated_text)
 
     def _handle_translation_failure(self, task_id: int, message: str) -> None:
-        self._active_tasks.pop(task_id, None)
+        task = self._active_tasks.pop(task_id, None)
         popup = self._task_popups.pop(task_id, None)
         self._task_signatures.pop(task_id, None)
         if popup is None:
             return
-        popup.show_translation_error(message, self.settings.primary_model)
+        popup.show_translation_error(
+            message, getattr(task, "_current_model", self.settings.primary_model)
+        )
 
-    def _set_comparison_available(
-        self, popup: TranslationPopup, model_name: str
-    ) -> None:
+    def _set_comparison_available(self, popup: TranslationPopup, model_name: str) -> None:
         primary_model = self.settings.primary_model.strip()
         fallback_model = self.settings.fallback_model.strip()
         popup.set_comparison_available(
@@ -524,8 +633,17 @@ class QuickTranslateApp(QObject):
         task.signals.success.connect(self._handle_comparison_success)
         task.signals.partial.connect(self._handle_comparison_partial)
         task.signals.failure.connect(self._handle_comparison_failure)
+        task.signals.attempt.connect(self._handle_translation_attempt)
+        task.signals.cancelled.connect(self._handle_translation_cancelled)
         self._active_tasks[task_id] = task
         self._comparison_task_popups[task_id] = popup
+        popup.show_request_status(
+            fallback_model,
+            self._reasoning_effort_for_display(fallback_model),
+            "",
+            queued=True,
+            comparison=True,
+        )
         self.thread_pool.start(task)
 
     def _handle_comparison_partial(self, task_id: int, translated_text: str) -> None:
@@ -539,14 +657,16 @@ class QuickTranslateApp(QObject):
         translated_text: str,
         model_name: str,
     ) -> None:
-        self._active_tasks.pop(task_id, None)
+        task = self._active_tasks.pop(task_id, None)
         popup = self._comparison_task_popups.pop(task_id, None)
         if popup is None:
             return
         popup.show_comparison_result(
             translated_text,
             model_name,
-            self._reasoning_effort_for_display(model_name),
+            self._reasoning_effort_for_display(
+                model_name, getattr(task, "settings", self.settings)
+            ),
         )
 
     def _handle_comparison_failure(self, task_id: int, message: str) -> None:
@@ -558,8 +678,17 @@ class QuickTranslateApp(QObject):
     def _show_error(self, message: str) -> None:
         self.popup.show_status("오류", message)
 
-    def _reasoning_effort_for_display(self, model_name: str) -> str:
-        config = effective_reasoning_for_request(model_name, self.settings).config
+    def _reasoning_effort_for_display(
+        self, model_name: str, settings: AppSettings | None = None
+    ) -> str:
+        request_settings = settings or self.settings
+        requested_model = model_name
+        if settings is not None and model_name not in (
+            settings.primary_model,
+            settings.fallback_model,
+        ):
+            requested_model = settings.primary_model
+        config = effective_reasoning_for_request(requested_model, request_settings).config
         if not config:
             return "기본값"
         effort = config.get("effort") or config.get("reasoning_effort")
@@ -605,6 +734,8 @@ class QuickTranslateApp(QObject):
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
     def quit(self) -> None:
+        for task in self._active_tasks.values():
+            task.cancel()
         self.pending_clipboard_capture = False
         self.clipboard_poll_timer.stop()
         self.copy_trigger.stop()
@@ -631,15 +762,11 @@ def main() -> int:
     instance_lock = QLockFile(str(LOCK_PATH))
     instance_lock.setStaleLockTime(0)
     if not instance_lock.tryLock(100):
-        QMessageBox.information(
-            None, "QuickTranslate", "QuickTranslate가 이미 실행 중입니다."
-        )
+        QMessageBox.information(None, "QuickTranslate", "QuickTranslate가 이미 실행 중입니다.")
         return 0
 
     if not QSystemTrayIcon.isSystemTrayAvailable():
-        QMessageBox.critical(
-            None, "QuickTranslate", "시스템 트레이를 사용할 수 없습니다."
-        )
+        QMessageBox.critical(None, "QuickTranslate", "시스템 트레이를 사용할 수 없습니다.")
         return 1
 
     quick_translate = QuickTranslateApp(app)

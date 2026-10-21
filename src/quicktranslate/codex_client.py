@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event, Lock, Thread
+from time import monotonic
 from typing import Any
 
 from . import __version__
@@ -26,11 +27,18 @@ _CODEX_BASE_INSTRUCTIONS = (
 
 
 class CodexProviderError(Exception):
-    def __init__(self, user_message: str, detail: str, *, retryable: bool) -> None:
+    def __init__(
+        self, user_message: str, detail: str, *, retryable: bool, allow_fallback: bool = True
+    ) -> None:
         super().__init__(detail)
         self.user_message = user_message
         self.detail = detail
         self.retryable = retryable
+        self.allow_fallback = allow_fallback
+
+
+class TranslationCancelled(Exception):
+    pass
 
 
 @dataclass
@@ -47,6 +55,7 @@ class _TurnState:
     final_text: str = ""
     error: dict[str, Any] | str | None = None
     status: str = "inProgress"
+    on_model_changed: Callable[[str], None] | None = None
 
 
 def find_codex_executable() -> str | None:
@@ -76,16 +85,10 @@ def find_codex_executable() -> str | None:
             continue
         seen.add(root)
         candidates = list(
-            root.glob(
-                "node_modules/@openai/codex/**/vendor/"
-                "x86_64-pc-windows-msvc/bin/codex.exe"
-            )
+            root.glob("node_modules/@openai/codex/**/vendor/x86_64-pc-windows-msvc/bin/codex.exe")
         )
         candidates.extend(
-            root.glob(
-                "node_modules/@openai/codex/**/vendor/"
-                "aarch64-pc-windows-msvc/bin/codex.exe"
-            )
+            root.glob("node_modules/@openai/codex/**/vendor/aarch64-pc-windows-msvc/bin/codex.exe")
         )
         if candidates:
             return str(max(candidates, key=lambda path: path.stat().st_mtime))
@@ -114,7 +117,11 @@ class CodexAppServerClient:
         instructions: str,
         timeout: float,
         on_delta: Callable[[str], None] | None = None,
+        cancel_event: Event | None = None,
+        on_model_changed: Callable[[str], None] | None = None,
     ) -> str:
+        if cancel_event is not None and cancel_event.is_set():
+            raise TranslationCancelled()
         self._ensure_started()
         CODEX_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
         thread_response = self._request(
@@ -132,9 +139,7 @@ class CodexAppServerClient:
             },
             timeout=min(timeout, 30.0),
         )
-        thread_id = str(
-            thread_response.get("result", {}).get("thread", {}).get("id") or ""
-        )
+        thread_id = str(thread_response.get("result", {}).get("thread", {}).get("id") or "")
         if not thread_id:
             raise CodexProviderError(
                 "Codex 번역 작업을 시작하지 못했습니다.",
@@ -142,7 +147,7 @@ class CodexAppServerClient:
                 retryable=True,
             )
 
-        turn = _TurnState(on_delta=on_delta)
+        turn = _TurnState(on_delta=on_delta, on_model_changed=on_model_changed)
         with self._state_lock:
             self._turns[thread_id] = turn
 
@@ -156,6 +161,8 @@ class CodexAppServerClient:
             inputs.append({"type": "image", "url": image_data_url, "detail": "auto"})
 
         try:
+            if cancel_event is not None and cancel_event.is_set():
+                raise TranslationCancelled()
             turn_response = self._request(
                 "turn/start",
                 {
@@ -169,9 +176,7 @@ class CodexAppServerClient:
                 },
                 timeout=min(timeout, 30.0),
             )
-            turn_id = str(
-                turn_response.get("result", {}).get("turn", {}).get("id") or ""
-            )
+            turn_id = str(turn_response.get("result", {}).get("turn", {}).get("id") or "")
             if not turn_id:
                 raise CodexProviderError(
                     "Codex 번역 요청을 시작하지 못했습니다.",
@@ -179,7 +184,17 @@ class CodexAppServerClient:
                     retryable=True,
                 )
 
-            if not turn.completed.wait(timeout):
+            deadline = monotonic() + timeout
+            while not turn.completed.wait(0.1):
+                if cancel_event is not None and cancel_event.is_set():
+                    self._interrupt(thread_id, turn_id)
+                    raise TranslationCancelled()
+                if monotonic() >= deadline:
+                    break
+            if cancel_event is not None and cancel_event.is_set():
+                self._interrupt(thread_id, turn_id)
+                raise TranslationCancelled()
+            if not turn.completed.is_set():
                 self._interrupt(thread_id, turn_id)
                 raise CodexProviderError(
                     "Codex 구독 번역 응답이 지연되고 있습니다.",
@@ -368,11 +383,16 @@ class CodexAppServerClient:
 
         callback = None
         delta = ""
+        model_callback = None
+        changed_model = ""
         with self._state_lock:
             turn = self._turns.get(thread_id)
             if turn is None:
                 return
-            if method == "item/started":
+            if method == "model/rerouted":
+                changed_model = str(params.get("toModel") or "")
+                model_callback = turn.on_model_changed
+            elif method == "item/started":
                 item = params.get("item")
                 if isinstance(item, dict) and item.get("type") == "agentMessage":
                     turn.item_phases[str(item.get("id") or "")] = item.get("phase")
@@ -402,6 +422,8 @@ class CodexAppServerClient:
 
         if callback is not None and delta:
             callback(delta)
+        if model_callback is not None and changed_model:
+            model_callback(changed_model)
 
     def _fail_active(self, detail: str) -> None:
         with self._state_lock:
@@ -436,6 +458,15 @@ def _error_from_turn(error: Any, model: str) -> CodexProviderError:
 
 def _classified_error(detail: str, log_detail: str) -> CodexProviderError:
     lowered = detail.lower()
+    if "cyberpolicy" in lowered or "content_policy" in lowered:
+        return CodexProviderError(
+            "Codex 안전 정책에 따라 요청이 중단됐습니다.",
+            log_detail,
+            retryable=False,
+            allow_fallback=False,
+        )
+    if "serveroverloaded" in lowered or "at capacity" in lowered:
+        return CodexProviderError("Codex 서버가 혼잡합니다.", log_detail, retryable=True)
     if "usagelimitexceeded" in lowered or "usage limit" in lowered:
         return CodexProviderError(
             "Codex 요금제 사용 한도에 도달했습니다.",
@@ -448,7 +479,9 @@ def _classified_error(detail: str, log_detail: str) -> CodexProviderError:
             log_detail,
             retryable=False,
         )
-    if "model" in lowered and ("not found" in lowered or "unsupported" in lowered):
+    if "model" in lowered and any(
+        s in lowered for s in ("not found", "unsupported", "not supported")
+    ):
         return CodexProviderError(
             "현재 Codex 요금제에서 선택한 모델을 사용할 수 없습니다.",
             log_detail,
@@ -481,6 +514,8 @@ def request_codex_translation(
     instructions: str,
     timeout: float,
     on_delta: Callable[[str], None] | None = None,
+    cancel_event: Event | None = None,
+    on_model_changed: Callable[[str], None] | None = None,
 ) -> str:
     return CODEX_CLIENT.translate(
         source_text,
@@ -490,6 +525,8 @@ def request_codex_translation(
         instructions=instructions,
         timeout=timeout,
         on_delta=on_delta,
+        cancel_event=cancel_event,
+        on_model_changed=on_model_changed,
     )
 
 

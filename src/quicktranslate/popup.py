@@ -71,6 +71,7 @@ class TranslationPopup(QWidget):
         self._global_esc_down = False
         self._global_left_down = False
         self._global_right_down = False
+        self._request_notes = {False: "", True: ""}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -108,9 +109,7 @@ class TranslationPopup(QWidget):
         self.pin_button.setToolTip("다른 곳을 클릭해도 번역창을 유지합니다.")
         self.always_pin_button = QPushButton("상시")
         self.always_pin_button.setCheckable(True)
-        self.always_pin_button.setToolTip(
-            "이후 새 번역창을 항상 고정된 상태로 엽니다."
-        )
+        self.always_pin_button.setToolTip("이후 새 번역창을 항상 고정된 상태로 엽니다.")
         self.compare_button = QPushButton("비교")
         self.compare_button.setToolTip("폴백 모델의 번역과 나란히 비교합니다.")
         self.compare_button.setEnabled(False)
@@ -138,9 +137,7 @@ class TranslationPopup(QWidget):
         primary_layout.setSpacing(4)
         self.comparison_primary_label = QLabel()
         self.comparison_primary_label.setObjectName("comparisonModelLabel")
-        self.comparison_primary_label.setSizePolicy(
-            QSizePolicy.Ignored, QSizePolicy.Preferred
-        )
+        self.comparison_primary_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.comparison_primary_edit = QTextEdit()
         self.comparison_primary_edit.setReadOnly(True)
         self.comparison_primary_edit.setLineWrapMode(QTextEdit.WidgetWidth)
@@ -155,9 +152,7 @@ class TranslationPopup(QWidget):
         fallback_layout.setSpacing(4)
         self.comparison_fallback_label = QLabel()
         self.comparison_fallback_label.setObjectName("comparisonModelLabel")
-        self.comparison_fallback_label.setSizePolicy(
-            QSizePolicy.Ignored, QSizePolicy.Preferred
-        )
+        self.comparison_fallback_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.comparison_fallback_edit = QTextEdit()
         self.comparison_fallback_edit.setReadOnly(True)
         self.comparison_fallback_edit.setLineWrapMode(QTextEdit.WidgetWidth)
@@ -176,7 +171,12 @@ class TranslationPopup(QWidget):
         comparison_layout.setStretch(2, 1)
         self.comparison_panel.hide()
 
+        self.request_status_label = QLabel()
+        self.request_status_label.setWordWrap(True)
+        self.request_status_label.setObjectName("modelLabel")
+        self.request_status_label.hide()
         panel_layout.addWidget(self.action_bar)
+        panel_layout.addWidget(self.request_status_label)
         panel_layout.addWidget(self.text_edit)
         panel_layout.addWidget(self.comparison_panel)
         outer.addWidget(self.panel)
@@ -215,10 +215,7 @@ class TranslationPopup(QWidget):
             self.comparison_fallback_edit.viewport(),
             self.action_bar,
         ):
-            if (
-                event.type() == QEvent.Type.MouseButtonPress
-                and event.button() == Qt.LeftButton
-            ):
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.LeftButton:
                 local_pos = self._event_pos_in_self(watched, event)
                 edges = self._resize_edges_for_pos(local_pos)
                 if edges:
@@ -241,10 +238,7 @@ class TranslationPopup(QWidget):
                     return True
                 self._update_cursor(local_pos)
 
-            if (
-                event.type() == QEvent.Type.MouseButtonRelease
-                and event.button() == Qt.LeftButton
-            ):
+            if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.LeftButton:
                 if self._resize_edges:
                     self._finish_pointer_interaction()
                     return True
@@ -252,11 +246,7 @@ class TranslationPopup(QWidget):
                     self._finish_pointer_interaction()
                     return True
 
-            if (
-                event.type() == QEvent.Type.Leave
-                and not self._resize_edges
-                and not self._moving
-            ):
+            if event.type() == QEvent.Type.Leave and not self._resize_edges and not self._moving:
                 self.unsetCursor()
         return super().eventFilter(watched, event)
 
@@ -282,6 +272,7 @@ class TranslationPopup(QWidget):
         self._auto_max_height = max(auto_max_height, self._MIN_HEIGHT)
 
     def begin_new_translation(self, *, pinned: bool = False) -> None:
+        self._clear_request_status()
         self._moving = False
         self._resize_edges = Qt.Edges()
         self._system_pointer_interaction = False
@@ -309,6 +300,52 @@ class TranslationPopup(QWidget):
     def set_comparison_available(self, available: bool) -> None:
         self.compare_button.setEnabled(available and not self._comparison_mode)
 
+    def _clear_request_status(self) -> None:
+        self._request_notes = {False: "", True: ""}
+        self.request_status_label.clear()
+        self.request_status_label.hide()
+
+    def show_request_status(
+        self,
+        model: str,
+        effort: str,
+        reason: str,
+        *,
+        queued: bool = False,
+        comparison: bool = False,
+    ) -> None:
+        display_model = model.removeprefix("openrouter/")
+        prefix = "폴백 · " if reason and not comparison else ""
+        label = f"{prefix}{display_model}" + (f" · {effort}" if effort else "")
+        message = "대기 중…" if queued else "번역 중…"
+        self._request_notes[comparison] = (
+            ("비교 " if comparison else "") + ("대기 중" if queued else f"모델 전환: {reason}")
+            if queued or reason
+            else ""
+        )
+        note = "\n".join(value for value in self._request_notes.values() if value)
+        self.request_status_label.setText(note)
+        self.request_status_label.setVisible(bool(note))
+        if self._comparison_mode:
+            edit = self.comparison_fallback_edit if comparison else self.comparison_primary_edit
+            model_label = (
+                self.comparison_fallback_label if comparison else self.comparison_primary_label
+            )
+        else:
+            edit, model_label = self.text_edit, self.model_label
+            self.text_edit.setProperty("translationModelLabel", label)
+        model_label.setText(label)
+        model_label.setToolTip(model)
+        self._content_revision += 1
+        edit.setPlainText(message)
+
+    def _request_status_height(self) -> int:
+        return (
+            0
+            if self.request_status_label.isHidden()
+            else self.request_status_label.sizeHint().height() + 5
+        )
+
     def show_translation(
         self,
         text: str,
@@ -325,9 +362,7 @@ class TranslationPopup(QWidget):
             self._loading = False
             self.comparison_primary_label.setText(display_label)
             self.comparison_primary_label.setToolTip(model_name)
-            self._set_comparison_text(
-                self.comparison_primary_edit, text, preserve_scroll=True
-            )
+            self._set_comparison_text(self.comparison_primary_edit, text, preserve_scroll=True)
             if not self._user_resized:
                 self._auto_resize_comparison()
             return
@@ -344,6 +379,7 @@ class TranslationPopup(QWidget):
         self._show_popup(reposition=not self.isVisible())
 
     def show_loading(self, message: str = "번역 중...") -> None:
+        self._clear_request_status()
         self._reset_comparison_view()
         self._loading = True
         self.copy_button.setEnabled(True)
@@ -359,9 +395,7 @@ class TranslationPopup(QWidget):
         self._loading = True
         self.copy_button.setEnabled(True)
         if self._comparison_mode:
-            self._set_comparison_text(
-                self.comparison_primary_edit, text, preserve_scroll=True
-            )
+            self._set_comparison_text(self.comparison_primary_edit, text, preserve_scroll=True)
             if not self._user_resized:
                 self._auto_resize_comparison(grow_only=True)
             return
@@ -370,15 +404,16 @@ class TranslationPopup(QWidget):
 
     def show_translation_error(self, message: str, model_name: str) -> None:
         if not self._comparison_mode:
-            self.show_status("오류", message)
+            self._loading = False
+            self.model_label.setText("오류 · " + model_name.removeprefix("openrouter/"))
+            self.model_label.setToolTip(model_name)
+            self._set_text_and_auto_resize(message)
             return
         self._loading = False
         model_display = model_name.removeprefix("openrouter/")
         self.comparison_primary_label.setText(f"기본 오류 · {model_display}")
         self.comparison_primary_label.setToolTip(model_name)
-        self._set_comparison_text(
-            self.comparison_primary_edit, message, preserve_scroll=False
-        )
+        self._set_comparison_text(self.comparison_primary_edit, message, preserve_scroll=False)
 
     def show_status(self, title: str, message: str) -> None:
         self._reset_comparison_view()
@@ -415,20 +450,12 @@ class TranslationPopup(QWidget):
         self.model_label.setText("번역 비교")
         self.model_label.setToolTip("")
         primary_display = primary_model.removeprefix("openrouter/")
-        primary_effort_label = (
-            f" · {primary_reasoning_effort}" if primary_reasoning_effort else ""
-        )
-        self.comparison_primary_label.setText(
-            f"{primary_display}{primary_effort_label}"
-        )
+        primary_effort_label = f" · {primary_reasoning_effort}" if primary_reasoning_effort else ""
+        self.comparison_primary_label.setText(f"{primary_display}{primary_effort_label}")
         self.comparison_primary_label.setToolTip(primary_model)
         fallback_display = fallback_model.removeprefix("openrouter/")
-        effort_label = (
-            f" · {fallback_reasoning_effort}" if fallback_reasoning_effort else ""
-        )
-        self.comparison_fallback_label.setText(
-            f"폴백 · {fallback_display}{effort_label}"
-        )
+        effort_label = f" · {fallback_reasoning_effort}" if fallback_reasoning_effort else ""
+        self.comparison_fallback_label.setText(f"폴백 · {fallback_display}{effort_label}")
         self.comparison_fallback_label.setToolTip(fallback_model)
         self.comparison_primary_edit.setPlainText(self.text_edit.toPlainText())
         self.comparison_fallback_edit.setPlainText("비교 번역 중...")
@@ -439,9 +466,7 @@ class TranslationPopup(QWidget):
         self._show_popup(reposition=False)
 
     def show_comparison_partial(self, text: str) -> None:
-        self._set_comparison_text(
-            self.comparison_fallback_edit, text, preserve_scroll=True
-        )
+        self._set_comparison_text(self.comparison_fallback_edit, text, preserve_scroll=True)
         if not self._user_resized:
             self._auto_resize_comparison(grow_only=True)
 
@@ -454,13 +479,9 @@ class TranslationPopup(QWidget):
         self._loading = False
         model_display = model_name.removeprefix("openrouter/")
         effort_label = f" · {reasoning_effort}" if reasoning_effort else ""
-        self.comparison_fallback_label.setText(
-            f"폴백 · {model_display}{effort_label}"
-        )
+        self.comparison_fallback_label.setText(f"폴백 · {model_display}{effort_label}")
         self.comparison_fallback_label.setToolTip(model_name)
-        self._set_comparison_text(
-            self.comparison_fallback_edit, text, preserve_scroll=True
-        )
+        self._set_comparison_text(self.comparison_fallback_edit, text, preserve_scroll=True)
         if not self._user_resized:
             self._auto_resize_comparison()
 
@@ -469,9 +490,7 @@ class TranslationPopup(QWidget):
         model_display = model_name.removeprefix("openrouter/")
         self.comparison_fallback_label.setText(f"폴백 오류 · {model_display}")
         self.comparison_fallback_label.setToolTip(model_name)
-        self._set_comparison_text(
-            self.comparison_fallback_edit, message, preserve_scroll=False
-        )
+        self._set_comparison_text(self.comparison_fallback_edit, message, preserve_scroll=False)
 
     def _reset_comparison_view(self) -> None:
         self._comparison_mode = False
@@ -479,9 +498,7 @@ class TranslationPopup(QWidget):
         self.comparison_panel.hide()
         self.text_edit.show()
 
-    def _set_comparison_text(
-        self, edit: QTextEdit, text: str, *, preserve_scroll: bool
-    ) -> None:
+    def _set_comparison_text(self, edit: QTextEdit, text: str, *, preserve_scroll: bool) -> None:
         scroll_bar = edit.verticalScrollBar()
         scroll_value = scroll_bar.value() if preserve_scroll else None
         follow_bottom = preserve_scroll and scroll_value >= scroll_bar.maximum() - 2
@@ -505,7 +522,10 @@ class TranslationPopup(QWidget):
             heights.append(ceil(document.size().height()))
         target_height = max(
             self._MIN_HEIGHT,
-            min(max(heights) + self._TEXT_CHROME_HEIGHT + 22, self._auto_max_height),
+            min(
+                max(heights) + self._TEXT_CHROME_HEIGHT + 22 + self._request_status_height(),
+                self._auto_max_height,
+            ),
         )
         target_size = QSize(target_width, target_height)
         if grow_only:
@@ -545,14 +565,10 @@ class TranslationPopup(QWidget):
             return
         lines = text.splitlines() or [text]
         metrics = QFontMetrics(self.text_edit.font())
-        longest_line_width = max(
-            (metrics.horizontalAdvance(line) for line in lines), default=0
-        )
+        longest_line_width = max((metrics.horizontalAdvance(line) for line in lines), default=0)
         panel_margins = self.panel.layout().contentsMargins()
         action_bar_width = (
-            self.action_bar.sizeHint().width()
-            + panel_margins.left()
-            + panel_margins.right()
+            self.action_bar.sizeHint().width() + panel_margins.left() + panel_margins.right()
         )
 
         target_width = max(
@@ -571,7 +587,7 @@ class TranslationPopup(QWidget):
         target_height = max(
             self._MIN_HEIGHT,
             min(
-                int(doc.size().height()) + self._TEXT_CHROME_HEIGHT,
+                int(doc.size().height()) + self._TEXT_CHROME_HEIGHT + self._request_status_height(),
                 self._auto_max_height,
             ),
         )
@@ -603,7 +619,9 @@ class TranslationPopup(QWidget):
         target_height = max(
             self._MIN_HEIGHT,
             min(
-                ceil(document.size().height()) + self._TEXT_CHROME_HEIGHT,
+                ceil(document.size().height())
+                + self._TEXT_CHROME_HEIGHT
+                + self._request_status_height(),
                 self._auto_max_height,
             ),
         )
@@ -634,9 +652,7 @@ class TranslationPopup(QWidget):
 
     def _arm_outside_click_guard(self) -> None:
         self._reset_global_input_state()
-        self._outside_clicks_enabled_at = (
-            monotonic() + self._OUTSIDE_CLICK_GRACE_SECONDS
-        )
+        self._outside_clicks_enabled_at = monotonic() + self._OUTSIDE_CLICK_GRACE_SECONDS
 
     def _keep_inside_available_screen(self) -> None:
         if self._pointer_interaction_active:
@@ -654,11 +670,7 @@ class TranslationPopup(QWidget):
         cursor_pos = QCursor.pos()
         screen = QGuiApplication.screenAt(cursor_pos)
         fallback_screen = self.screen() or QGuiApplication.primaryScreen()
-        geometry = (
-            screen.availableGeometry()
-            if screen
-            else fallback_screen.availableGeometry()
-        )
+        geometry = screen.availableGeometry() if screen else fallback_screen.availableGeometry()
         pos = cursor_pos + QPoint(18, 18)
 
         if pos.x() + self.width() > geometry.right():
@@ -734,9 +746,7 @@ class TranslationPopup(QWidget):
         if self._comparison_mode:
             self._auto_resize_comparison(grow_only=pending_grow_only)
         else:
-            self._auto_resize_to_content(
-                self.text_edit.toPlainText(), grow_only=pending_grow_only
-            )
+            self._auto_resize_to_content(self.text_edit.toPlainText(), grow_only=pending_grow_only)
 
     def _update_cursor(self, pos: QPoint) -> None:
         edges = self._resize_edges_for_pos(pos)
@@ -773,9 +783,7 @@ class TranslationPopup(QWidget):
             geometry.setTop(new_top)
         if self._resize_edges & Qt.BottomEdge:
             geometry.setBottom(
-                max(
-                    geometry.top() + self.minimumHeight(), geometry.bottom() + delta.y()
-                )
+                max(geometry.top() + self.minimumHeight(), geometry.bottom() + delta.y())
             )
 
         self.setGeometry(geometry.normalized())
@@ -886,9 +894,7 @@ class TranslationPopup(QWidget):
         self._global_left_down = left_down
         self._global_right_down = right_down
 
-    def _should_hide_for_global_click(
-        self, current_down: bool, previous_down: bool
-    ) -> bool:
+    def _should_hide_for_global_click(self, current_down: bool, previous_down: bool) -> bool:
         if not current_down or previous_down:
             return False
         if self._pinned or monotonic() < self._outside_clicks_enabled_at:

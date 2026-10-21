@@ -24,6 +24,10 @@ class FakePopup:
         self.comparison_errors: list[tuple[str, str]] = []
         self.translation_errors: list[tuple[str, str]] = []
         self.loading_count = 0
+        self.request_statuses = []
+
+    def show_request_status(self, *args, **kwargs):
+        self.request_statuses.append((args, kwargs))
 
     def isVisible(self) -> bool:
         return self._visible
@@ -63,9 +67,7 @@ class FakePopup:
     def show_comparison_partial(self, text: str) -> None:
         self.comparison_partials.append(text)
 
-    def show_comparison_result(
-        self, text: str, model: str, reasoning_effort: str
-    ) -> None:
+    def show_comparison_result(self, text: str, model: str, reasoning_effort: str) -> None:
         self.comparison_results.append((text, model, reasoning_effort))
 
     def show_comparison_error(self, message: str, model: str) -> None:
@@ -95,7 +97,9 @@ class AppPopupManagementTests(unittest.TestCase):
     def test_new_translation_enables_comparison_before_worker_finishes(self) -> None:
         popup = FakePopup(visible=False, pinned=False)
         settings = SimpleNamespace(primary_model="primary", fallback_model="fallback")
-        signals = SimpleNamespace(success=Mock(), partial=Mock(), failure=Mock())
+        signals = SimpleNamespace(
+            success=Mock(), partial=Mock(), failure=Mock(), attempt=Mock(), cancelled=Mock()
+        )
         task = SimpleNamespace(signals=signals)
         app = SimpleNamespace(
             settings=settings,
@@ -112,6 +116,9 @@ class AppPopupManagementTests(unittest.TestCase):
             _handle_translation_success=Mock(),
             _handle_translation_partial=Mock(),
             _handle_translation_failure=Mock(),
+            _handle_translation_attempt=Mock(),
+            _handle_translation_cancelled=Mock(),
+            _reasoning_effort_for_display=Mock(return_value="low"),
             thread_pool=Mock(),
         )
         app._set_comparison_available = lambda target, model: (
@@ -262,7 +269,9 @@ class AppPopupManagementTests(unittest.TestCase):
             primary_model="openrouter/z-ai/glm-5.3-flash",
             fallback_model=fallback_model,
         )
-        signals = SimpleNamespace(success=Mock(), partial=Mock(), failure=Mock())
+        signals = SimpleNamespace(
+            success=Mock(), partial=Mock(), failure=Mock(), attempt=Mock(), cancelled=Mock()
+        )
         task = SimpleNamespace(signals=signals)
         app = SimpleNamespace(
             settings=settings,
@@ -275,6 +284,8 @@ class AppPopupManagementTests(unittest.TestCase):
             _handle_comparison_success=Mock(),
             _handle_comparison_partial=Mock(),
             _handle_comparison_failure=Mock(),
+            _handle_translation_attempt=Mock(),
+            _handle_translation_cancelled=Mock(),
             thread_pool=Mock(),
         )
 
@@ -344,9 +355,7 @@ class AppPopupManagementTests(unittest.TestCase):
 
         QuickTranslateApp._handle_translation_failure(app, 9, "기본 요청 실패")
 
-        self.assertEqual(
-            popup.translation_errors, [("기본 요청 실패", "primary")]
-        )
+        self.assertEqual(popup.translation_errors, [("기본 요청 실패", "primary")])
 
     def test_always_pin_toggle_pins_current_and_preserves_older_windows(self) -> None:
         current = FakePopup(visible=True, pinned=False)

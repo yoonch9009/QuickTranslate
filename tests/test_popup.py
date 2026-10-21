@@ -193,9 +193,7 @@ class PopupTests(unittest.TestCase):
         self.assertFalse(self.popup.comparison_panel.isHidden())
         self.assertEqual(self.popup.comparison_primary_label.text(), "primary · low")
         self.assertEqual(self.popup.comparison_primary_edit.toPlainText(), "기본 번역")
-        self.assertEqual(
-            self.popup.comparison_fallback_label.text(), "폴백 · fallback · none"
-        )
+        self.assertEqual(self.popup.comparison_fallback_label.text(), "폴백 · fallback · none")
         self.assertEqual(self.popup.comparison_fallback_edit.toPlainText(), "폴백 완료")
         self.assertFalse(self.popup.compare_button.isEnabled())
         self.popup.copy_text()
@@ -238,22 +236,15 @@ class PopupTests(unittest.TestCase):
         self.popup.show_translation_error("기본 요청 실패", "primary")
 
         self.assertFalse(self.popup.comparison_panel.isHidden())
-        self.assertEqual(
-            self.popup.comparison_primary_label.text(), "기본 오류 · primary"
-        )
-        self.assertEqual(
-            self.popup.comparison_primary_edit.toPlainText(), "기본 요청 실패"
-        )
-        self.assertEqual(
-            self.popup.comparison_fallback_edit.toPlainText(), "비교 번역 중..."
-        )
+        self.assertEqual(self.popup.comparison_primary_label.text(), "기본 오류 · primary")
+        self.assertEqual(self.popup.comparison_primary_edit.toPlainText(), "기본 요청 실패")
+        self.assertEqual(self.popup.comparison_fallback_edit.toPlainText(), "비교 번역 중...")
 
     def test_pin_buttons_only_turn_blue_when_checked(self) -> None:
         style = " ".join(self.popup.styleSheet().split())
 
         self.assertIn(
-            "#pinButton:hover, #alwaysPinButton:hover "
-            "{ color: rgba(255, 255, 255, 0.98); }",
+            "#pinButton:hover, #alwaysPinButton:hover { color: rgba(255, 255, 255, 0.98); }",
             style,
         )
         self.assertIn(
@@ -330,6 +321,31 @@ class PopupTests(unittest.TestCase):
 
         self.assertTrue(self.popup.is_pinned)
         self.assertEqual(self.popup.pin_button.text(), "고정됨")
+
+    def test_request_status_shows_model_and_clears_old_attempt(self) -> None:
+        self.popup.show_loading()
+        self.popup.show_request_status("codex/primary", "low", "", queued=True)
+        self.assertIn("codex/primary", self.popup.model_label.text())
+        self.assertIn("대기", self.popup.request_status_label.text())
+        self.popup.show_partial_translation("OLD_PARTIAL")
+        self.popup.show_request_status("openrouter/fallback", "low", "서버 혼잡")
+        self.assertNotIn("OLD_PARTIAL", self.popup.text_edit.toPlainText())
+        self.assertIn("폴백", self.popup.model_label.text())
+        self.assertIn("서버 혼잡", self.popup.request_status_label.text())
+        self.popup.show_translation("FINAL", "openrouter/fallback", used_fallback=True)
+        self.assertIn("서버 혼잡", self.popup.request_status_label.text())
+        self.popup.begin_new_translation()
+        self.assertTrue(self.popup.request_status_label.isHidden())
+
+    def test_comparison_attempt_reset_preserves_other_column(self) -> None:
+        self.popup.show_translation("PRIMARY", "codex/primary")
+        self.popup.show_comparison_loading("codex/primary", "low", "openrouter/other", "none")
+        self.popup.show_request_status("openrouter/other", "none", "", comparison=True)
+        self.assertEqual(self.popup.comparison_primary_edit.toPlainText(), "PRIMARY")
+        self.popup.show_comparison_partial("OLD_COMPARISON")
+        self.popup.show_request_status("openrouter/new", "none", "server busy", comparison=True)
+        self.assertNotIn("OLD_COMPARISON", self.popup.comparison_fallback_edit.toPlainText())
+        self.assertEqual(self.popup.comparison_primary_edit.toPlainText(), "PRIMARY")
 
     def test_native_drag_cannot_be_mistaken_for_an_outside_click(self) -> None:
         self.popup.show_loading()
