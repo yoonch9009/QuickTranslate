@@ -38,7 +38,6 @@ class TranslationPopup(QWidget):
     _LOADING_HEIGHT = 92
     _GLOBAL_INPUT_POLL_MS = 25
     _OUTSIDE_CLICK_GRACE_SECONDS = 0.3
-    _VK_ESCAPE = 0x1B
     _VK_LBUTTON = 0x01
     _VK_RBUTTON = 0x02
 
@@ -68,7 +67,6 @@ class TranslationPopup(QWidget):
         self._content_revision = 0
         self._pending_auto_resize_grow_only: bool | None = None
         self._outside_clicks_enabled_at = 0.0
-        self._global_esc_down = False
         self._global_left_down = False
         self._global_right_down = False
         self._request_notes = {False: "", True: ""}
@@ -187,6 +185,8 @@ class TranslationPopup(QWidget):
         self.copy_button.clicked.connect(self.copy_text)
         self.close_button.clicked.connect(self.dismiss)
         self.close_shortcut = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        self.close_shortcut.setContext(Qt.WindowShortcut)
+        self.close_shortcut.setAutoRepeat(False)
         self.close_shortcut.activated.connect(self.dismiss)
 
         self.installEventFilter(self)
@@ -863,13 +863,6 @@ class TranslationPopup(QWidget):
         if not self.isVisible():
             return
 
-        esc_down = self._is_virtual_key_down(self._VK_ESCAPE)
-        if esc_down and not self._global_esc_down:
-            self.dismiss()
-            self._global_esc_down = True
-            return
-        self._global_esc_down = esc_down
-
         left_down = self._is_virtual_key_down(self._VK_LBUTTON)
         right_down = self._is_virtual_key_down(self._VK_RBUTTON)
 
@@ -904,7 +897,6 @@ class TranslationPopup(QWidget):
         return not self.frameGeometry().contains(QCursor.pos())
 
     def _reset_global_input_state(self) -> None:
-        self._global_esc_down = self._is_virtual_key_down(self._VK_ESCAPE)
         self._global_left_down = self._is_virtual_key_down(self._VK_LBUTTON)
         self._global_right_down = self._is_virtual_key_down(self._VK_RBUTTON)
 

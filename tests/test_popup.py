@@ -7,8 +7,10 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint, QSize, Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt
+from PySide6.QtGui import QKeyEvent
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QWidget
 
 from quicktranslate.popup import TranslationPopup
 
@@ -364,7 +366,7 @@ class PopupTests(unittest.TestCase):
             with patch.object(
                 self.popup,
                 "_is_virtual_key_down",
-                side_effect=[False, True, False],
+                side_effect=[True, False],
             ):
                 self.popup._poll_global_input()
 
@@ -381,6 +383,63 @@ class PopupTests(unittest.TestCase):
 
         self.assertTrue(self.popup.isVisible())
         self.assertFalse(self.popup._moving)
+
+    def test_escape_poll_does_not_close_background_pinned_popup(self) -> None:
+        self.popup.show_translation("고정된 번역", "model")
+        self.popup.set_pinned(True)
+        with patch.object(self.popup, "_is_virtual_key_down", side_effect=lambda key: key == 0x1B):
+            self.popup._poll_global_input()
+        self.assertTrue(self.popup.isVisible())
+
+    def test_escape_closes_only_active_popup_and_keeps_other_pin(self) -> None:
+        other = TranslationPopup(620, 700)
+        closed = []
+        self.popup.closed.connect(lambda: closed.append("selected"))
+        other.closed.connect(lambda: closed.append("other"))
+        try:
+            self.popup.show_translation("첫 번째 번역", "model")
+            self.popup.set_pinned(True)
+            other.show_translation("두 번째 번역", "model")
+            other.set_pinned(True)
+            self.popup.activateWindow()
+            self.popup.text_edit.setFocus()
+            self.application.processEvents()
+            self.assertTrue(self.popup.isActiveWindow())
+            QTest.keyClick(self.popup.text_edit, Qt.Key_Escape)
+            self.application.processEvents()
+            self.assertFalse(self.popup.isVisible())
+            self.assertTrue(other.isVisible())
+            self.assertTrue(other.is_pinned)
+            self.assertEqual(closed, ["selected"])
+            self.assertFalse(other.close_shortcut.autoRepeat())
+            other.activateWindow()
+            self.application.processEvents()
+            repeated = QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier, "", True)
+            self.application.sendEvent(other.text_edit, repeated)
+            self.application.processEvents()
+            self.assertTrue(other.isVisible())
+            QTest.keyClick(other.text_edit, Qt.Key_Escape)
+            self.application.processEvents()
+            self.assertFalse(other.isVisible())
+            self.assertEqual(closed, ["selected", "other"])
+        finally:
+            other.hide()
+            other.deleteLater()
+
+    def test_escape_in_other_window_leaves_pinned_popup_visible(self) -> None:
+        other = QWidget()
+        try:
+            self.popup.show_translation("번역", "model")
+            self.popup.set_pinned(True)
+            other.show()
+            other.activateWindow()
+            self.application.processEvents()
+            QTest.keyClick(other, Qt.Key_Escape)
+            self.application.processEvents()
+            self.assertTrue(self.popup.isVisible())
+        finally:
+            other.hide()
+            other.deleteLater()
 
     def test_streaming_resize_waits_until_native_drag_finishes(self) -> None:
         self.popup.show_loading()
